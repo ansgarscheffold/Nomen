@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Für On-Device-Modelle (Apple Intelligence / Foundation Models): Im Xcode-Target unter Signing & Capabilities die Capability „Foundation Models“ bzw. Apple Intelligence aktivieren. Es gibt keinen separaten plist-Key nur für die Neural Engine. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- GGUF-Download (Hugging Face) wenn „H2O Danube3“ in den Einstellungen gewählt ist -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>
