@@ -115,3 +115,5 @@ You can pass extra flags through to SwiftPM, e.g.:
 4. **Add or drop** PDFs and other supported files.
 5. Wait for analysis; review the **preview** table and status messages.
 6. **Rename** selected rows (or all); keep backups until you are satisfied.
+
+<a href="https://www.buymeacoffee.com/ansgarscheffold" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
