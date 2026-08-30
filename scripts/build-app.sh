@@ -117,17 +117,26 @@ if [[ ! -f "$ENTITLEMENTS" ]]; then
 fi
 
 if command -v codesign >/dev/null 2>&1; then
-	echo "→ codesign (Hardened Runtime, Sandbox-Entitlements) …"
+	# Ad-hoc + Hardened Runtime: dyld lehnt das eingebettete llama.framework ab
+	# (kein Team-ID, Library Validation). Runtime nur bei echter Developer-ID.
 	TIMESTAMP_ARGS=(--timestamp=none)
 	if [[ "$SIGN_IDENTITY" != "-" ]]; then
-		TIMESTAMP_ARGS=(--timestamp)
+		echo "→ codesign (Hardened Runtime, Sandbox-Entitlements, $SIGN_IDENTITY) …"
+		if [[ -d "$APP_PATH/Contents/Frameworks/llama.framework" ]]; then
+			codesign --force --options runtime --timestamp -s "$SIGN_IDENTITY" \
+				"$APP_PATH/Contents/Frameworks/llama.framework"
+		fi
+		codesign --force --options runtime --timestamp \
+			--entitlements "$ENTITLEMENTS" -s "$SIGN_IDENTITY" "$APP_PATH"
+	else
+		echo "→ codesign (Ad-hoc, Sandbox-Entitlements) …"
+		if [[ -d "$APP_PATH/Contents/Frameworks/llama.framework" ]]; then
+			codesign --force --timestamp=none -s - \
+				"$APP_PATH/Contents/Frameworks/llama.framework"
+		fi
+		codesign --force --timestamp=none \
+			--entitlements "$ENTITLEMENTS" -s - "$APP_PATH"
 	fi
-	if [[ -d "$APP_PATH/Contents/Frameworks/llama.framework" ]]; then
-		codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" -s "$SIGN_IDENTITY" \
-			"$APP_PATH/Contents/Frameworks/llama.framework"
-	fi
-	codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" \
-		--entitlements "$ENTITLEMENTS" -s "$SIGN_IDENTITY" "$APP_PATH"
 	codesign --verify --verbose=2 "$APP_PATH"
 else
 	echo "Hinweis: codesign nicht gefunden — Bundle ist unsigniert." >&2
