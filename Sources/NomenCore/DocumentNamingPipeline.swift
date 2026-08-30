@@ -1,12 +1,12 @@
 import Foundation
 
 /// Gemeinsame Prompt-Texte und JSON-Auswertung für Apple Foundation Models und GGUF (Llama).
-enum DocumentNamingPipeline {
+public enum DocumentNamingPipeline {
     /// Obergrenze gegen Modell-„Roman“; darunter gilt der JSON-Titel als nutzbar (Slug).
-    static let modelTitleWallOfTextWordLimit = 36
-    static let modelTitleWallOfTextCharLimit = 420
+    public static let modelTitleWallOfTextWordLimit = 36
+    public static let modelTitleWallOfTextCharLimit = 420
     /// Gemeinsames Textlimit für Foundation- und GGUF-Prompts (bisher an beiden Call-Sites 8000).
-    static let excerptCharacterLimit = 8000
+    public static let excerptCharacterLimit = 8000
 
     private static let promptDateLock = NSLock()
     private static let promptDateFormatter: DateFormatter = {
@@ -15,13 +15,13 @@ enum DocumentNamingPipeline {
         return df
     }()
 
-    static func formattedPromptDate(_ date: Date) -> String {
+    public static func formattedPromptDate(_ date: Date) -> String {
         promptDateLock.lock()
         defer { promptDateLock.unlock() }
         return promptDateFormatter.string(from: date)
     }
 
-    static func prompts(
+    public static func prompts(
         sampleText: String,
         fileModificationDate: Date,
         fallbackFilenameStem: String,
@@ -45,7 +45,7 @@ enum DocumentNamingPipeline {
         )
     }
 
-    static func buildInstructions(
+    public static func buildInstructions(
         modelLocaleId: String,
         outputLanguageMode: OutputLanguageMode,
         uiLocaleIdentifier: String
@@ -90,27 +90,27 @@ enum DocumentNamingPipeline {
     }
 
     /// Für Llama: `de_DE` / `en_US` wie bei Foundation üblich — ohne Abfrage von `SystemLanguageModel.supportsLocale`.
-    static func instructionLocaleIdForLlamaInference(uiLocaleIdentifier: String) -> String {
+    public static func instructionLocaleIdForLlamaInference(uiLocaleIdentifier: String) -> String {
         uiLocaleIdentifier.hasPrefix("de") ? "de_DE" : "en_US"
     }
 
     /// Beginn der Assistentenantwort für Prefilling: zwingt das Modell, das Datum als nächstes zu vervollständigen.
-    static let qwenAssistantJSONDatePrefill = "{\"date\":\""
+    public static let qwenAssistantJSONDatePrefill = "{\"date\":\""
 
     /// Erstes vollständiges `{…}` aus dem Rohtext (GGUF schreibt oft endlos weiter).
-    static func truncateToFirstBalancedJSONObject(_ raw: String) -> String {
+    public static func truncateToFirstBalancedJSONObject(_ raw: String) -> String {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let j = extractFirstBalancedJSONObject(from: t) { return j }
         return t
     }
 
     /// Sobald das erste vollständige `{…}` geschlossen ist, abbrechen (spart Tokens, verhindert Nachplappern).
-    static func ggufShouldStopGeneration(leadIn: String, generatedSuffix: String) -> Bool {
+    public static func ggufShouldStopGeneration(leadIn: String, generatedSuffix: String) -> Bool {
         let full = leadIn + generatedSuffix
         return extractFirstBalancedJSONObject(from: full) != nil
     }
 
-    static func buildUserPrompt(
+    public static func buildUserPrompt(
         sampleText: String,
         fileModificationDate: Date,
         fallbackFilenameStem: String,
@@ -137,7 +137,7 @@ enum DocumentNamingPipeline {
     }
 
     /// Rohtext des Modells → gleiche Auswertung wie bei Foundation Models.
-    static func analysisPackageFromRawReply(
+    public static func analysisPackageFromRawReply(
         raw: String,
         fileModificationDate: Date,
         fallbackFilenameStem: String,
@@ -194,7 +194,7 @@ enum DocumentNamingPipeline {
         )
     }
 
-    static func packageFailure(
+    public static func packageFailure(
         raw: String,
         fileModificationDate: Date,
         error: String,
@@ -208,7 +208,7 @@ enum DocumentNamingPipeline {
         )
     }
 
-    static func validatedDocumentDate(iso: String?, fileModificationDate: Date) -> (Date, Bool) {
+    public static func validatedDocumentDate(iso: String?, fileModificationDate: Date) -> (Date, Bool) {
         let trimmed = iso?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard trimmed.count >= 10, trimmed.count <= 32 else {
             return (fileModificationDate, false)
@@ -229,7 +229,7 @@ enum DocumentNamingPipeline {
         return (d, true)
     }
 
-    static func isWeakGenericTitle(_ slug: String) -> Bool {
+    public static func isWeakGenericTitle(_ slug: String) -> Bool {
         let lower = slug.lowercased()
         if ["doc", "document", "pdf", "scan", "file", "untitled", "unknown"].contains(lower) {
             return true
@@ -243,7 +243,7 @@ enum DocumentNamingPipeline {
         return false
     }
 
-    static func repairInvalidJSONStringEscapes(_ s: String) -> String {
+    public static func repairInvalidJSONStringEscapes(_ s: String) -> String {
         var out = ""
         out.reserveCapacity(s.count)
         var i = s.startIndex
@@ -303,7 +303,7 @@ enum DocumentNamingPipeline {
         return (v >= 48 && v <= 57) || (v >= 65 && v <= 70) || (v >= 97 && v <= 102)
     }
 
-    static func extractJSONObject(from raw: String) -> String {
+    public static func extractJSONObject(from raw: String) -> String {
         let stripped = stripMarkdownCodeFences(from: raw)
         if let balanced = extractFirstBalancedJSONObject(from: stripped) {
             return balanced

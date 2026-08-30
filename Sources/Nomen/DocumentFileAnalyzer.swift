@@ -1,4 +1,5 @@
 import Foundation
+import NomenCore
 
 /// Baut Vorschauzeilen und Debug-Snapshots aus einem abgeschlossenen Analyse-Lauf.
 /// Der Batch-Loop (Fortschritt, Abbruch) bleibt im ViewModel.

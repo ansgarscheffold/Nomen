@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import NomenCore
+
+private let maxParallelExtractions = 4
 
 @MainActor
 final class RenameViewModel: ObservableObject {
@@ -296,62 +299,81 @@ final class RenameViewModel: ObservableObject {
         progressValue = 0
         progressLabel = t.progressExtract
 
-        let total = Double(pendingIndices.count)
         let documentCount = pendingIndices.count
+        let hasPDF = pendingIndices.contains {
+            merged[$0].pathExtension.lowercased() == SupportedDocumentFormat.pdf.rawValue
+        }
+        if hasPDF {
+            phase = .ocr
+            progressLabel = t.progressOCR
+        }
 
-        for (progressIdx, mergeIdx) in pendingIndices.enumerated() {
-            if Task.isCancelled {
-                applyPartialAnalysisIfCurrentRun(
-                    run: run,
-                    built: contiguousCompletedRows(builtRows)
-                )
-                return
-            }
+        let extracts = await extractPendingFiles(
+            merged: merged,
+            pendingIndices: pendingIndices,
+            run: run
+        )
+        if Task.isCancelled || run != analysisRun {
+            applyPartialAnalysisIfCurrentRun(run: run, built: completedRows(builtRows))
+            return
+        }
 
-            let url = merged[mergeIdx]
-            let fileBase = Double(progressIdx) / max(total, 1)
-            let fileSlice = 1.0 / max(total, 1)
-            progressValue = fileBase
-            let docIndex = progressIdx + 1
-
-            let originalName = url.lastPathComponent
-            let ext = url.pathExtension
-
-            do {
-                let granted = url.startAccessingSecurityScopedResource()
-                defer {
-                    if granted { url.stopAccessingSecurityScopedResource() }
-                }
-                let row = try await analyzeOneFile(
-                    url: url,
-                    originalName: originalName,
-                    ext: ext,
-                    schemaSnapshot: schemaSnapshot,
-                    fileBase: fileBase,
-                    fileSlice: fileSlice,
-                    documentIndex: docIndex,
-                    documentCount: documentCount
-                )
-                builtRows[mergeIdx] = row
-                progressValue = fileBase + fileSlice
-            } catch {
+        for outcome in extracts {
+            if case .failure(let mergeIdx, let url, let originalName, let message) = outcome {
                 builtRows[mergeIdx] = DocumentFileAnalyzer.makeFailedRow(
                     url: url,
                     originalName: originalName,
-                    message: error.localizedDescription
+                    message: message
                 )
-                progressValue = fileBase + fileSlice
             }
+        }
+        rows = builtRows
 
-            rows = builtRows
+        let successes = extracts.compactMap { outcome -> ExtractedPending? in
+            if case .success(let item) = outcome { return item }
+            return nil
+        }
+        .sorted { $0.mergeIdx < $1.mergeIdx }
 
+        phase = .understanding
+        let inferTotal = max(successes.count, 1)
+        for (progressIdx, item) in successes.enumerated() {
             if Task.isCancelled {
-                applyPartialAnalysisIfCurrentRun(
-                    run: run,
-                    built: contiguousCompletedRows(builtRows)
-                )
+                applyPartialAnalysisIfCurrentRun(run: run, built: completedRows(builtRows))
                 return
             }
+
+            progressLabel = analysisBatchLabel(
+                documentIndex: progressIdx + 1,
+                documentCount: documentCount,
+                phase: t.progressNL(inferenceBackend: namingInferenceBackend)
+            )
+            progressValue = 0.45 + (Double(progressIdx) / Double(inferTotal)) * 0.55
+
+            let languageMode = outputLanguageMode
+            let backend = namingInferenceBackend
+            let localeId = uiLanguage == .german ? "de_DE" : "en_US"
+            let pkg = await OnDeviceDocumentAnalyzer.analyzePackage(
+                sampleText: item.snap.combinedText,
+                fileModificationDate: item.modificationDate,
+                fallbackFilenameStem: item.url.deletingPathExtension().lastPathComponent,
+                localeIdentifier: localeId,
+                outputLanguageMode: languageMode,
+                inferenceBackend: backend
+            )
+            builtRows[item.mergeIdx] = DocumentFileAnalyzer.makeCompletedRow(
+                url: item.url,
+                originalName: item.originalName,
+                extension: item.ext,
+                schema: schemaSnapshot,
+                snap: item.snap,
+                fileModificationDate: item.modificationDate,
+                package: pkg,
+                strings: t,
+                includePipelineDebug: AppPreferences.showPipelineDebug
+            )
+            rows = builtRows
+            progressValue = 0.45 + (Double(progressIdx + 1) / Double(inferTotal)) * 0.55
         }
 
         guard run == analysisRun else {
@@ -380,16 +402,9 @@ final class RenameViewModel: ObservableObject {
         )
     }
 
-    /// Abgeschlossene Zeilen bis zur ersten noch laufenden Platzhalter-Zeile (für Abbruch und konsistente `lastInputURLs`).
-    private func contiguousCompletedRows(_ builtRows: [RenamePreviewRow]) -> [RenamePreviewRow] {
-        var out: [RenamePreviewRow] = []
-        for r in builtRows {
-            if r.isAnalysisPlaceholder {
-                break
-            }
-            out.append(r)
-        }
-        return out
+    /// Fertige Zeilen in Listenreihenfolge (Platzhalter entfallen — auch bei außer der Reihe abgeschlossener Parallel-Extraktion).
+    private func completedRows(_ builtRows: [RenamePreviewRow]) -> [RenamePreviewRow] {
+        builtRows.filter { !$0.isAnalysisPlaceholder }
     }
 
     private func applyPartialAnalysisIfCurrentRun(run: Int, built: [RenamePreviewRow]) {
@@ -409,75 +424,110 @@ final class RenameViewModel: ObservableObject {
         return "\(t.progressDocumentsBatch(current: documentIndex, total: documentCount)) — \(phase)"
     }
 
-    private func analyzeOneFile(
-        url: URL,
-        originalName: String,
-        ext: String,
-        schemaSnapshot: DateNameSchema,
-        fileBase: Double,
-        fileSlice: Double,
-        documentIndex: Int,
-        documentCount: Int
-    ) async throws -> RenamePreviewRow {
-        phase = .extracting
-        progressLabel = analysisBatchLabel(
-            documentIndex: documentIndex,
-            documentCount: documentCount,
-            phase: t.progressExtract
-        )
+    private func extractPendingFiles(
+        merged: [URL],
+        pendingIndices: [Int],
+        run: Int
+    ) async -> [ExtractOutcome] {
+        var outcomes: [ExtractOutcome] = []
+        outcomes.reserveCapacity(pendingIndices.count)
 
-        if ext.lowercased() == SupportedDocumentFormat.pdf.rawValue {
-            phase = .ocr
-            progressLabel = analysisBatchLabel(
-                documentIndex: documentIndex,
-                documentCount: documentCount,
-                phase: t.progressOCR
-            )
-            progressValue = fileBase + fileSlice * 0.02
+        await withTaskGroup(of: ExtractOutcome.self) { group in
+            var next = 0
+            var inFlight = 0
+
+            func enqueue() {
+                while inFlight < maxParallelExtractions, next < pendingIndices.count {
+                    let mergeIdx = pendingIndices[next]
+                    next += 1
+                    inFlight += 1
+                    let url = merged[mergeIdx]
+                    group.addTask {
+                        await Self.extractOne(url: url, mergeIdx: mergeIdx)
+                    }
+                }
+            }
+
+            enqueue()
+            var finished = 0
+            let total = max(pendingIndices.count, 1)
+            for await outcome in group {
+                inFlight -= 1
+                finished += 1
+                outcomes.append(outcome)
+                if run == analysisRun {
+                    progressValue = (Double(finished) / Double(total)) * 0.45
+                    progressLabel = analysisBatchLabel(
+                        documentIndex: finished,
+                        documentCount: pendingIndices.count,
+                        phase: t.progressExtract
+                    )
+                }
+                if Task.isCancelled {
+                    group.cancelAll()
+                    break
+                }
+                enqueue()
+            }
         }
-        let snap = try await DocumentAIProcessor.extractForRenaming(
-            url: url,
-            extLowercased: ext.lowercased()
-        )
 
-        if ext.lowercased() == SupportedDocumentFormat.pdf.rawValue {
-            progressValue = fileBase + fileSlice * 0.46
-        } else {
-            progressValue = fileBase + fileSlice * 0.35
+        return outcomes.sorted { lhs, rhs in
+            extractMergeIndex(lhs) < extractMergeIndex(rhs)
         }
-
-        phase = .understanding
-        progressLabel = analysisBatchLabel(
-            documentIndex: documentIndex,
-            documentCount: documentCount,
-            phase: t.progressNL(inferenceBackend: namingInferenceBackend)
-        )
-        progressValue = fileBase + fileSlice * 0.52
-
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        let mod = attrs[.modificationDate] as? Date ?? Date()
-        let stem = url.deletingPathExtension().lastPathComponent
-        let localeId = uiLanguage == .german ? "de_DE" : "en_US"
-
-        let pkg = await OnDeviceDocumentAnalyzer.analyzePackage(
-            sampleText: snap.combinedText,
-            fileModificationDate: mod,
-            fallbackFilenameStem: stem,
-            localeIdentifier: localeId,
-            outputLanguageMode: outputLanguageMode,
-            inferenceBackend: namingInferenceBackend
-        )
-
-        return DocumentFileAnalyzer.makeCompletedRow(
-            url: url,
-            originalName: originalName,
-            extension: ext,
-            schema: schemaSnapshot,
-            snap: snap,
-            fileModificationDate: mod,
-            package: pkg,
-            strings: t,
-            includePipelineDebug: AppPreferences.showPipelineDebug
-        )
     }
+
+    private func extractMergeIndex(_ outcome: ExtractOutcome) -> Int {
+        switch outcome {
+        case .success(let item): return item.mergeIdx
+        case .failure(let mergeIdx, _, _, _): return mergeIdx
+        }
+    }
+
+    nonisolated private static func extractOne(url: URL, mergeIdx: Int) async -> ExtractOutcome {
+        let originalName = url.lastPathComponent
+        let ext = url.pathExtension
+        let granted = url.startAccessingSecurityScopedResource()
+        defer {
+            if granted { url.stopAccessingSecurityScopedResource() }
+        }
+        do {
+            let snap = try await DocumentAIProcessor.extractForRenaming(
+                url: url,
+                extLowercased: ext.lowercased()
+            )
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            let mod = attrs[.modificationDate] as? Date ?? Date()
+            return .success(
+                ExtractedPending(
+                    mergeIdx: mergeIdx,
+                    url: url,
+                    originalName: originalName,
+                    ext: ext,
+                    snap: snap,
+                    modificationDate: mod
+                )
+            )
+        } catch {
+            return .failure(
+                mergeIdx: mergeIdx,
+                url: url,
+                originalName: originalName,
+                message: error.localizedDescription
+            )
+        }
+    }
+}
+
+private struct ExtractedPending: Sendable {
+    let mergeIdx: Int
+    let url: URL
+    let originalName: String
+    let ext: String
+    let snap: DocumentAIProcessor.ExtractionSnapshot
+    let modificationDate: Date
+}
+
+private enum ExtractOutcome: Sendable {
+    case success(ExtractedPending)
+    case failure(mergeIdx: Int, url: URL, originalName: String, message: String)
 }

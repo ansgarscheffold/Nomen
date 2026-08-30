@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import NomenCore
 
 struct MainView: View {
     @StateObject private var model = RenameViewModel()
@@ -236,7 +237,7 @@ struct MainView: View {
         .onDrop(of: [.fileURL, .url], isTargeted: $isDragTargeted) { providers in
             guard !model.isRenaming else { return false }
             Task { @MainActor in
-                let urls = await collectFileURLs(from: providers)
+                let urls = await DroppedFileURLCollector.collect(from: providers)
                 if urls.isEmpty {
                     model.errorMessage = t.dropCouldNotReadURLs
                     return
@@ -486,66 +487,4 @@ private struct GentleProminentButtonStyle: ButtonStyle {
             .animation(.easeInOut(duration: 0.14), value: configuration.isPressed)
             .opacity(configuration.isPressed && isEnabled ? 0.92 : (isEnabled ? 1 : 0.55))
     }
-}
-
-@MainActor
-private func collectFileURLs(from providers: [NSItemProvider]) async -> [URL] {
-    var urls: [URL] = []
-    let candidates = [
-        UTType.fileURL.identifier,
-        "public.file-url",
-        UTType.url.identifier,
-    ]
-    for provider in providers {
-        outer: for typeId in candidates where provider.hasItemConformingToTypeIdentifier(typeId) {
-            do {
-                let item = try await provider.loadItem(forTypeIdentifier: typeId)
-                if let url = item as? URL {
-                    if url.isFileURL { urls.append(url) }
-                    break outer
-                }
-                if let nsurl = item as? NSURL {
-                    let u = nsurl as URL
-                    if u.isFileURL { urls.append(u) }
-                    break outer
-                }
-                if let data = item as? Data {
-                    var stale = false
-                    if let bookmark = try? URL(
-                        resolvingBookmarkData: data,
-                        options: [.withSecurityScope, .withoutUI],
-                        relativeTo: nil,
-                        bookmarkDataIsStale: &stale
-                    ), bookmark.isFileURL {
-                        urls.append(bookmark)
-                        break outer
-                    }
-                    if let s = String(data: data, encoding: .utf8) {
-                        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                        if let fileUrl = URL(string: trimmed), fileUrl.isFileURL {
-                            urls.append(fileUrl)
-                            break outer
-                        }
-                        let path = (trimmed as NSString).expandingTildeInPath
-                        if !path.isEmpty {
-                            urls.append(URL(fileURLWithPath: path))
-                            break outer
-                        }
-                    }
-                }
-                if let str = item as? String {
-                    if let fileUrl = URL(string: str), fileUrl.isFileURL {
-                        urls.append(fileUrl)
-                    } else {
-                        urls.append(URL(fileURLWithPath: (str as NSString).expandingTildeInPath))
-                    }
-                    break outer
-                }
-            } catch {
-                continue
-            }
-        }
-    }
-    return urls
 }

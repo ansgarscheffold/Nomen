@@ -1,8 +1,8 @@
 import Foundation
 
 /// Filesystem-safe title and pattern-based filename assembly (not document understanding).
-enum FilenameFormatting {
-    static func formatFilename(
+public enum FilenameFormatting {
+    public static func formatFilename(
         schema: DateNameSchema,
         title: String,
         date: Date,
@@ -99,11 +99,11 @@ enum FilenameFormatting {
     }
 }
 
-enum FilenameSanitizer {
-    static let archiveFallbackLiteral = "Document"
+public enum FilenameSanitizer {
+    public static let archiveFallbackLiteral = "Document"
 
     /// Dateiname-Stamm → Archiv-Titel, wenn das Modell keinen brauchbaren Titel liefert.
-    static func archiveFallbackTitle(fromFilenameStem stem: String) -> String {
+    public static func archiveFallbackTitle(fromFilenameStem stem: String) -> String {
         let slug = cleanStemForTitle(stem)
         return slug.isEmpty ? archiveFallbackLiteral : slug
     }
@@ -117,7 +117,7 @@ enum FilenameSanitizer {
     ///   "2026-04-10 01-33 - Doc"                 → "Doc"
     ///   "Apple Support Case 102866598713 11_4_2026_1_24pm" → "Apple Support Case"
     ///   "23 05 Gartensofa"                        → "Gartensofa"
-    static func cleanStemForTitle(_ stem: String) -> String {
+    public static func cleanStemForTitle(_ stem: String) -> String {
         var s = slugTitle(stem)
 
         // ── 1. Strip leading date/time blocks ────────────────────────────────
@@ -161,7 +161,7 @@ enum FilenameSanitizer {
         return filtered.isEmpty ? s : filtered
     }
 
-    static func slugTitle(_ raw: String) -> String {
+    public static func slugTitle(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Kein diacriticInsensitive-Folding: Umlaute (äöü) und ß sollen in Dateinamen erhalten bleiben;
         // APFS/HFS+ nutzen UTF-8. Früheres Folding hat sie zu a/o/u verflacht.

@@ -2,7 +2,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 /// Unterstützte Eingabeformate — eine Liste für Filter, Open-Panel und Extraktion.
-enum SupportedDocumentFormat: String, CaseIterable, Sendable {
+public enum SupportedDocumentFormat: String, CaseIterable, Sendable {
     case pdf
     case txt
     case md
@@ -13,15 +13,15 @@ enum SupportedDocumentFormat: String, CaseIterable, Sendable {
     case rtfd
     case docx
 
-    static func isSupported(url: URL) -> Bool {
+    public static func isSupported(url: URL) -> Bool {
         isSupported(fileExtension: url.pathExtension)
     }
 
-    static func isSupported(fileExtension: String) -> Bool {
+    public static func isSupported(fileExtension: String) -> Bool {
         Self(rawValue: fileExtension.lowercased()) != nil
     }
 
-    static var openPanelContentTypes: [UTType] {
+    public static var openPanelContentTypes: [UTType] {
         var types: [UTType] = [.pdf, .plainText, .rtf, .text]
         if let md = UTType(filenameExtension: md.rawValue) { types.append(md) }
         if let markdown = UTType(filenameExtension: markdown.rawValue) { types.append(markdown) }

@@ -1,4 +1,5 @@
 import SwiftUI
+import NomenCore
 
 struct SettingsView: View {
     @AppStorage(AppPreferenceKey.appLanguage) private var languageRaw = AppLanguage.english.rawValue

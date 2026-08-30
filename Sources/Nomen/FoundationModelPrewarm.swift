@@ -2,6 +2,7 @@ import Foundation
 
 #if canImport(FoundationModels)
 import FoundationModels
+import NomenCore
 
 /// Wie im Apple Code-Along (Kap. 6): Modell früh laden, erste Anfrage wirkt schneller.
 @available(macOS 26.0, *)

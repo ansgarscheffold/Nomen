@@ -1,5 +1,6 @@
 import Foundation
 import os.log
+import NomenCore
 
 /// On-Device-Benennung mit lokalem GGUF (Qwen2.5-7B-Instruct) über llama.cpp — gleiche Prompts wie Foundation + JSON-Prefill.
 enum DocumentLlamaNaming {

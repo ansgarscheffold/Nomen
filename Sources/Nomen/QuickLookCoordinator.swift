@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import QuickLookUI
+import NomenCore
 
 /// Finder-ähnliche Quick Look (Space) für ausgewählte Datei-URLs.
 /// Hält Security-Scoped-Zugriff für Sandbox-Dateien bis zum Schließen des Panels.

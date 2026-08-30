@@ -1,8 +1,8 @@
 import Foundation
 
 /// Dateisystem-Operationen für Vorschau-Kollisionen und das eigentliche Umbenennen.
-enum FileRenameOperations {
-    static func uniquifyFilename(
+public enum FileRenameOperations {
+    public static func uniquifyFilename(
         desiredName: String,
         directory: URL,
         ignoreIfSameAs source: URL,
@@ -32,7 +32,7 @@ enum FileRenameOperations {
     }
 
     /// Verschiebt `source` auf einen kollisionsfreien Namen. Unverändert, wenn Quelle und Ziel identisch sind.
-    static func renameIfNeeded(
+    public static func renameIfNeeded(
         source: URL,
         desiredName: String,
         fileManager: FileManager = .default
@@ -52,9 +52,9 @@ enum FileRenameOperations {
     }
 }
 
-enum SecurityScopedResource {
+public enum SecurityScopedResource {
     @MainActor
-    static func accessing<T>(_ url: URL, _ body: () throws -> T) rethrows -> T {
+    public static func accessing<T>(_ url: URL, _ body: () throws -> T) rethrows -> T {
         let granted = url.startAccessingSecurityScopedResource()
         defer {
             if granted { url.stopAccessingSecurityScopedResource() }

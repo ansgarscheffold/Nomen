@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NomenCore
 
 /// Gemeinsamer Block: Benennungs-Backend inkl. GGUF-Download (Einstellungen + Onboarding).
 struct NamingModelSettingsBlock: View {

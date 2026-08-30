@@ -3,6 +3,7 @@ import Foundation
 import os.log
 import PDFKit
 import Vision
+import NomenCore
 
 enum DocumentAIProcessorError: LocalizedError {
     case ocrFailed

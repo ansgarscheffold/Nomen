@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NomenCore
 
 @main
 struct NomenApp: App {

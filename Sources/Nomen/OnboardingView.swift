@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import NomenCore
 
 /// Erster Start: Willkommen und geführte Einrichtung (gleiche AppStorage-Keys wie Einstellungen).
 struct OnboardingView: View {

@@ -1,4 +1,5 @@
 import Foundation
+import NomenCore
 
 /// Qwen2.5-7B-Instruct (GGUF, Q4_K_M, zwei Shards) — Hugging Face `Qwen/Qwen2.5-7B-Instruct-GGUF`.
 /// llama.cpp lädt über das erste Shard; das zweite muss im selben Ordner liegen.

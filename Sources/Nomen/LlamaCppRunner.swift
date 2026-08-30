@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import LlamaSwift
+import NomenCore
 
 enum LlamaCppError: LocalizedError {
     case loadFailed

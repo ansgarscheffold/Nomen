@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import PDFKit
 import ZIPFoundation
+import NomenCore
 
 enum ExtractionError: LocalizedError {
     case unsupportedType(String)

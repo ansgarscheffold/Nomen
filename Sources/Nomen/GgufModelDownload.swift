@@ -1,75 +1,117 @@
 import Foundation
+import NomenCore
 
 enum GgufModelDownloadError: LocalizedError {
     case badHTTPStatus(Int)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
         case .badHTTPStatus(let code):
             return "Server antwortete mit HTTP \(code)."
+        case .cancelled:
+            return "Download wurde abgebrochen."
         }
     }
 }
 
-/// GGUF-Download mit Fortschritt (`URLSessionDownloadDelegate`). Läuft mit `delegateQueue: .main`.
+/// GGUF-Download über eine Background-`URLSession` mit Resume-Daten auf Disk.
 enum GgufModelDownload {
-    /// `fraction` ist 0…1 wenn die Gesamtgröße bekannt ist, sonst `nil` (nur Balken ohne Anteil).
+    /// `fraction` ist 0…1 wenn die Gesamtgröße bekannt ist, sonst `nil`.
     @MainActor
     static func download(
         from remoteURL: URL,
         to destinationURL: URL,
         onProgress: @escaping (Double?) -> Void
     ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let runner = DownloadRunner(
-                remoteURL: remoteURL,
-                destinationURL: destinationURL,
-                onProgress: onProgress,
-                continuation: continuation
-            )
-            runner.start()
-        }
+        try await GgufDownloadCoordinator.shared.download(
+            from: remoteURL,
+            to: destinationURL,
+            onProgress: onProgress
+        )
     }
 }
 
-private final class DownloadRunner: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let remoteURL: URL
-    private let destinationURL: URL
-    private let onProgress: (Double?) -> Void
-    private var continuation: CheckedContinuation<Void, Error>?
-    private var session: URLSession!
-    private var completed = false
+final class GgufDownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    static let shared = GgufDownloadCoordinator()
 
-    init(
+    private struct Pending {
+        let destinationURL: URL
+        let resumeURL: URL
+        let remoteURL: URL
+        let onProgress: (Double?) -> Void
+        var continuation: CheckedContinuation<Void, Error>?
+        var retriedWithoutResume = false
+    }
+
+    private var pending: [Int: Pending] = [:]
+
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.background(withIdentifier: "app.nomen.gguf-download")
+        config.isDiscretionary = false
+        config.sessionSendsLaunchEvents = true
+        config.allowsConstrainedNetworkAccess = true
+        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
+    }()
+
+    @MainActor
+    func download(
+        from remoteURL: URL,
+        to destinationURL: URL,
+        onProgress: @escaping (Double?) -> Void
+    ) async throws {
+        let resumeURL = Self.resumeFileURL(for: destinationURL)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            startTask(
+                remoteURL: remoteURL,
+                destinationURL: destinationURL,
+                resumeURL: resumeURL,
+                onProgress: onProgress,
+                continuation: continuation,
+                allowResume: true
+            )
+        }
+    }
+
+    private static func resumeFileURL(for destinationURL: URL) -> URL {
+        destinationURL.appendingPathExtension("nomenresume")
+    }
+
+    private func startTask(
         remoteURL: URL,
         destinationURL: URL,
+        resumeURL: URL,
         onProgress: @escaping (Double?) -> Void,
-        continuation: CheckedContinuation<Void, Error>
+        continuation: CheckedContinuation<Void, Error>,
+        allowResume: Bool
     ) {
-        self.remoteURL = remoteURL
-        self.destinationURL = destinationURL
-        self.onProgress = onProgress
-        self.continuation = continuation
-        super.init()
-        let config = URLSessionConfiguration.default
-        session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        let task: URLSessionDownloadTask
+        if allowResume, let data = try? Data(contentsOf: resumeURL), !data.isEmpty {
+            task = session.downloadTask(withResumeData: data)
+        } else {
+            task = session.downloadTask(with: remoteURL)
+        }
+        pending[task.taskIdentifier] = Pending(
+            destinationURL: destinationURL,
+            resumeURL: resumeURL,
+            remoteURL: remoteURL,
+            onProgress: onProgress,
+            continuation: continuation,
+            retriedWithoutResume: !allowResume
+        )
+        task.resume()
     }
 
-    func start() {
-        session.downloadTask(with: remoteURL).resume()
-    }
-
-    private func finish(_ result: Result<Void, Error>) {
-        guard !completed else { return }
-        completed = true
-        session.finishTasksAndInvalidate()
+    private func finish(taskId: Int, _ result: Result<Void, Error>) {
+        guard var item = pending.removeValue(forKey: taskId) else { return }
         switch result {
         case .success:
-            continuation?.resume()
+            try? FileManager.default.removeItem(at: item.resumeURL)
+            item.continuation?.resume()
         case .failure(let error):
-            continuation?.resume(throwing: error)
+            item.continuation?.resume(throwing: error)
         }
-        continuation = nil
+        item.continuation = nil
     }
 
     func urlSession(
@@ -79,35 +121,74 @@ private final class DownloadRunner: NSObject, URLSessionDownloadDelegate, @unche
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
+        guard let item = pending[downloadTask.taskIdentifier] else { return }
         if totalBytesExpectedToWrite > 0 {
-            let f = min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
-            onProgress(f)
+            item.onProgress(min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
         } else {
-            onProgress(nil)
+            item.onProgress(nil)
         }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let item = pending[downloadTask.taskIdentifier] else { return }
         do {
             if let http = downloadTask.response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) {
                 throw GgufModelDownloadError.badHTTPStatus(http.statusCode)
             }
             let fm = FileManager.default
-            let parent = destinationURL.deletingLastPathComponent()
+            let parent = item.destinationURL.deletingLastPathComponent()
             try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: destinationURL.path) {
-                try fm.removeItem(at: destinationURL)
+            if fm.fileExists(atPath: item.destinationURL.path) {
+                try fm.removeItem(at: item.destinationURL)
             }
-            try fm.moveItem(at: location, to: destinationURL)
-            finish(.success(()))
+            try fm.moveItem(at: location, to: item.destinationURL)
+            finish(taskId: downloadTask.taskIdentifier, .success(()))
         } catch {
-            finish(.failure(error))
+            finish(taskId: downloadTask.taskIdentifier, .failure(error))
         }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error {
-            finish(.failure(error))
+        guard let error else { return }
+        guard pending[task.taskIdentifier] != nil else { return }
+
+        let ns = error as NSError
+        if let resume = ns.userInfo[NSURLSessionDownloadTaskResumeData] as? Data, !resume.isEmpty,
+           let item = pending[task.taskIdentifier] {
+            try? resume.write(to: item.resumeURL, options: .atomic)
         }
+
+        let cancelled = ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
+        if cancelled {
+            finish(taskId: task.taskIdentifier, .failure(GgufModelDownloadError.cancelled))
+            return
+        }
+
+        if let item = pending[task.taskIdentifier], !item.retriedWithoutResume {
+            try? FileManager.default.removeItem(at: item.resumeURL)
+            let dest = item.destinationURL
+            let resumeURL = item.resumeURL
+            let remote = item.remoteURL
+            let progress = item.onProgress
+            let continuation = item.continuation
+            pending.removeValue(forKey: task.taskIdentifier)
+            if let continuation {
+                startTask(
+                    remoteURL: remote,
+                    destinationURL: dest,
+                    resumeURL: resumeURL,
+                    onProgress: progress,
+                    continuation: continuation,
+                    allowResume: false
+                )
+            }
+            return
+        }
+
+        finish(taskId: task.taskIdentifier, .failure(error))
     }
 }
