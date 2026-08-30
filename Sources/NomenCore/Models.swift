@@ -85,6 +85,27 @@ public struct RenamePreviewRow: Identifiable, Hashable {
     /// Zeile wartet noch auf OCR/KI — für Live-Liste und Abbruch-Logik.
     public var isAnalysisPlaceholder: Bool = false
 
+    /// Table diffs and selection compare visible identity/content, not debug payloads.
+    public static func == (lhs: RenamePreviewRow, rhs: RenamePreviewRow) -> Bool {
+        lhs.id == rhs.id
+            && lhs.sourceURL == rhs.sourceURL
+            && lhs.originalName == rhs.originalName
+            && lhs.proposedName == rhs.proposedName
+            && lhs.statusMessage == rhs.statusMessage
+            && lhs.usedFallbackDate == rhs.usedFallbackDate
+            && lhs.isAnalysisPlaceholder == rhs.isAnalysisPlaceholder
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(sourceURL)
+        hasher.combine(originalName)
+        hasher.combine(proposedName)
+        hasher.combine(statusMessage)
+        hasher.combine(usedFallbackDate)
+        hasher.combine(isAnalysisPlaceholder)
+    }
+
     public var proposedURL: URL {
         sourceURL.deletingLastPathComponent().appendingPathComponent(proposedName)
     }

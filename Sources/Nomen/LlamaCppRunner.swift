@@ -72,6 +72,7 @@ actor LlamaCppRunner {
     private var ctx: OpaquePointer?
     private var loadedPath: String?
     private var backendBootstrapped = false
+    private var tokenPieceBuffer = [CChar](repeating: 0, count: 256)
 
     private init() {}
 
@@ -124,24 +125,23 @@ actor LlamaCppRunner {
     }
 
     /// `llama_token_to_piece` liefert bei zu kleinem Puffer eine negative Länge — dann vergrößern (verhindert Abstürze/Truncation).
-    private static func utf8Piece(for token: llama_token, vocab: OpaquePointer?) -> String {
+    private func utf8Piece(for token: llama_token, vocab: OpaquePointer?) -> String {
         guard let vocab else { return "" }
-        var buffer = [CChar](repeating: 0, count: 256)
         while true {
-            let needed = buffer.withUnsafeMutableBufferPointer { buf -> Int32 in
+            let needed = tokenPieceBuffer.withUnsafeMutableBufferPointer { buf -> Int32 in
                 guard let b = buf.baseAddress else { return 0 }
                 return llama_token_to_piece(vocab, token, b, Int32(buf.count), 0, true)
             }
             if needed >= 0 {
-                let n = min(Int(needed), buffer.count)
-                let utf8Slice = buffer.prefix(n).map { UInt8(bitPattern: $0) }
+                let n = min(Int(needed), tokenPieceBuffer.count)
+                let utf8Slice = tokenPieceBuffer.prefix(n).map { UInt8(bitPattern: $0) }
                 return String(decoding: utf8Slice, as: UTF8.self)
             }
             let required = Int(-needed)
-            if required <= buffer.count {
+            if required <= tokenPieceBuffer.count {
                 return ""
             }
-            buffer = [CChar](repeating: 0, count: min(required + 8, 65_536))
+            tokenPieceBuffer = [CChar](repeating: 0, count: min(required + 8, 65_536))
         }
     }
 
@@ -224,13 +224,13 @@ actor LlamaCppRunner {
                 break
             }
 
-            output.append(Self.utf8Piece(for: newTokenId, vocab: vocab))
+            output.append(utf8Piece(for: newTokenId, vocab: vocab))
 
             var single = newTokenId
             batch = llama_batch_get_one(&single, 1)
 
             if output.count > 8192 { break }
-            if DocumentNamingPipeline.ggufShouldStopGeneration(leadIn: jsonLeadIn, generatedSuffix: output) {
+            if output.last == "}", DocumentNamingPipeline.ggufShouldStopGeneration(leadIn: jsonLeadIn, generatedSuffix: output) {
                 break
             }
         }

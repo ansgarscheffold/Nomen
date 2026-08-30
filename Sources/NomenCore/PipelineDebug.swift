@@ -58,6 +58,7 @@ public struct PipelineDebugSnapshot: Hashable {
 public extension PipelineDebugSnapshot {
     func formattedReport(localizedHeaders: PipelineDebugL10n) -> String {
         var lines: [String] = []
+        lines.reserveCapacity(18)
         lines.append("━━ \(localizedHeaders.step1) ━━")
         lines.append(extractionSummary)
         if let e = embeddedPDFCharacterCount {
@@ -91,7 +92,7 @@ public extension PipelineDebugSnapshot {
     }
 }
 
-public struct PipelineDebugL10n {
+public struct PipelineDebugL10n: Equatable {
     public var step1: String
     public var step2: String
     public var step3: String

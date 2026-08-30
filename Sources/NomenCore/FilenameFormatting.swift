@@ -102,6 +102,18 @@ public enum FilenameFormatting {
 public enum FilenameSanitizer {
     public static let archiveFallbackLiteral = "Document"
 
+    private static let leadingYMDTime = try! NSRegularExpression(
+        pattern: #"^\d{4} \d{2} \d{2}(\s+\d+)*\s*"#
+    )
+    private static let leadingYYYYMMDD = try! NSRegularExpression(pattern: #"^\d{8} "#)
+    private static let leadingYYMMDD = try! NSRegularExpression(pattern: #"^\d{6} "#)
+    private static let leadingYYYYMM = try! NSRegularExpression(pattern: #"^\d{4} \d{2} "#)
+    private static let leadingYYMM = try! NSRegularExpression(pattern: #"^\d{2} \d{2} "#)
+    private static let amPmToken = try! NSRegularExpression(
+        pattern: #"^\d+(am|pm)$"#,
+        options: .caseInsensitive
+    )
+
     /// Dateiname-Stamm → Archiv-Titel, wenn das Modell keinen brauchbaren Titel liefert.
     public static func archiveFallbackTitle(fromFilenameStem stem: String) -> String {
         let slug = cleanStemForTitle(stem)
@@ -120,30 +132,12 @@ public enum FilenameSanitizer {
     public static func cleanStemForTitle(_ stem: String) -> String {
         var s = slugTitle(stem)
 
-        // ── 1. Strip leading date/time blocks ────────────────────────────────
-        // YYYY MM DD [optional trailing digit tokens — time, sequence numbers]
-        // e.g. "2026 04 10 01 33 Doc" → "Doc"
-        if let r = s.range(of: #"^\d{4} \d{2} \d{2}(\s+\d+)*\s*"#, options: .regularExpression) {
-            s = String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // YYYYMMDD (no separator) — e.g. "20231215 Hausrat"
-        if let r = s.range(of: #"^\d{8} "#, options: .regularExpression) {
-            s = String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // YYMMDD — e.g. "231215 Hausrat"
-        if let r = s.range(of: #"^\d{6} "#, options: .regularExpression) {
-            s = String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // YYYY MM — e.g. "2023 04 Sneaker"
-        if let r = s.range(of: #"^\d{4} \d{2} "#, options: .regularExpression) {
-            s = String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // YY MM — e.g. "23 05 Gartensofa"
-        if let r = s.range(of: #"^\d{2} \d{2} "#, options: .regularExpression) {
-            s = String(s[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        s = stripLeadingMatch(leadingYMDTime, from: s)
+        s = stripLeadingMatch(leadingYYYYMMDD, from: s)
+        s = stripLeadingMatch(leadingYYMMDD, from: s)
+        s = stripLeadingMatch(leadingYYYYMM, from: s)
+        s = stripLeadingMatch(leadingYYMM, from: s)
 
-        // ── 2. Filter non-semantic tokens (case/ref numbers, timestamps) ─────
         // Keep only tokens that contain at least one letter — pure digit strings
         // (e.g. "102866598713", "11", "4") and time suffixes ("24pm", "1am")
         // carry no archival meaning in a filename title.
@@ -152,13 +146,27 @@ public enum FilenameSanitizer {
             .filter { token in
                 let t = String(token)
                 if t.allSatisfy(\.isNumber) { return false }
-                if t.range(of: #"^\d+(am|pm)$"#,
-                           options: [.regularExpression, .caseInsensitive]) != nil { return false }
+                let nsLen = (t as NSString).length
+                if amPmToken.firstMatch(in: t, options: [], range: NSRange(location: 0, length: nsLen)) != nil {
+                    return false
+                }
                 return true
             }
             .joined(separator: " ")
 
         return filtered.isEmpty ? s : filtered
+    }
+
+    private static func stripLeadingMatch(_ regex: NSRegularExpression, from s: String) -> String {
+        let ns = s as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: s, options: [], range: full),
+              match.range.location == 0,
+              match.range.length > 0 else {
+            return s
+        }
+        return ns.substring(from: match.range.length)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public static func slugTitle(_ raw: String) -> String {

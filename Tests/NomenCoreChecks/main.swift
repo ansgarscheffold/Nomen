@@ -168,6 +168,54 @@ enum NomenCoreChecks {
                 && DocumentNamingPipeline.isWeakGenericTitle("12 04")
                 && !DocumentNamingPipeline.isWeakGenericTitle("Rechnung Strom")
         }
+        check("rejects non-dash date") {
+            let (_, ok) = DocumentNamingPipeline.validatedDocumentDate(
+                iso: "2022/06/03",
+                fileModificationDate: fileDate
+            )
+            return !ok
+        }
+        check("row equality ignores debug payload") {
+            let id = UUID()
+            let url = URL(fileURLWithPath: "/tmp/a.pdf")
+            let debug = PipelineDebugSnapshot(
+                extractionSummary: "x",
+                embeddedPDFCharacterCount: 1,
+                ocrCharacterCount: 2,
+                chosenSourceLabel: "y",
+                textSampleForModel: String(repeating: "a", count: 2000),
+                textTotalCharacters: 2000,
+                modelRawReply: "raw",
+                jsonSuggestedTitle: "t",
+                jsonDocumentDateISO: "2024-01-01",
+                jsonDateFromDocument: true,
+                modelOrParseError: nil,
+                finalTitleAfterSanitize: "t",
+                usedContentDate: true,
+                usedFilenameFallbackForTitle: false
+            )
+            let a = RenamePreviewRow(
+                id: id,
+                sourceURL: url,
+                originalName: "a.pdf",
+                proposedName: "n.pdf",
+                statusMessage: "ok",
+                usedFallbackDate: false,
+                namingBasis: nil,
+                pipelineDebug: debug
+            )
+            let b = RenamePreviewRow(
+                id: id,
+                sourceURL: url,
+                originalName: "a.pdf",
+                proposedName: "n.pdf",
+                statusMessage: "ok",
+                usedFallbackDate: false,
+                namingBasis: nil,
+                pipelineDebug: nil
+            )
+            return a == b
+        }
 
         check("supported extensions") {
             SupportedDocumentFormat.isSupported(fileExtension: "PDF")

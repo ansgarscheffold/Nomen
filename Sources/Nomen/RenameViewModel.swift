@@ -2,17 +2,25 @@ import AppKit
 import Foundation
 import NomenCore
 
-private let maxParallelExtractions = 4
+private let maxParallelExtractions = 6
+private let liveProgressInterval: Duration = .milliseconds(90)
+
+@MainActor
+final class RenameProgressState: ObservableObject {
+    @Published var label: String = ""
+    @Published var value: Double = 0
+}
 
 @MainActor
 final class RenameViewModel: ObservableObject {
     @Published var schema: DateNameSchema = .yearMonthTitle
-    @Published private(set) var rows: [RenamePreviewRow] = []
+    @Published private(set) var rows: [RenamePreviewRow] = [] {
+        didSet { reindexRows() }
+    }
     @Published private(set) var phase: RenameAnalysisPhase = .idle
-    @Published private(set) var progressLabel: String = ""
-    @Published private(set) var progressValue: Double = 0
     @Published var errorMessage: String?
     @Published private(set) var renameFeedbackPhase: RenameFeedbackPhase = .idle
+    let progress = RenameProgressState()
 
     /// Synced from the UI (AppStorage) so progress strings match the chosen language.
     var uiLanguage: AppLanguage = .english
@@ -29,6 +37,8 @@ final class RenameViewModel: ObservableObject {
     private var analysisRun: Int = 0
     private var analysisTask: Task<Void, Never>?
     private var renameTask: Task<Void, Never>?
+    private var rowByID: [UUID: RenamePreviewRow] = [:]
+    private var lastProgressPublish: ContinuousClock.Instant?
 
     private var t: L10n { L10n(uiLanguage) }
 
@@ -42,6 +52,43 @@ final class RenameViewModel: ObservableObject {
 
     var canRename: Bool {
         !rows.isEmpty && !isBusy && !isRenaming
+    }
+
+    func row(id: UUID) -> RenamePreviewRow? {
+        rowByID[id]
+    }
+
+    private func reindexRows() {
+        var map: [UUID: RenamePreviewRow] = [:]
+        map.reserveCapacity(rows.count)
+        for r in rows {
+            map[r.id] = r
+        }
+        rowByID = map
+    }
+
+    private func setProgress(value: Double, label: String, force: Bool = false) {
+        let labelChanged = progress.label != label
+        let valueChanged = abs(progress.value - value) >= 0.006
+        guard force || labelChanged || valueChanged else { return }
+        if !force, let last = lastProgressPublish, ContinuousClock.now - last < liveProgressInterval {
+            return
+        }
+        lastProgressPublish = .now
+        if labelChanged {
+            progress.label = label
+        }
+        if valueChanged || force {
+            progress.value = value
+        }
+    }
+
+    private static func interRenameDelay(total: Int) -> Duration? {
+        switch total {
+        case 1...6: return .milliseconds(50)
+        case 7...25: return .milliseconds(16)
+        default: return nil
+        }
     }
 
     func addFiles(urls: [URL]) {
@@ -80,8 +127,9 @@ final class RenameViewModel: ObservableObject {
         rows = []
         lastInputURLs = []
         phase = .idle
-        progressLabel = ""
-        progressValue = 0
+        lastProgressPublish = nil
+        progress.label = ""
+        progress.value = 0
         errorMessage = nil
     }
 
@@ -121,9 +169,9 @@ final class RenameViewModel: ObservableObject {
     func syncFooterAfterLanguageChange() {
         guard phase == .ready else { return }
         if rows.isEmpty {
-            progressLabel = ""
+            progress.label = ""
         } else {
-            progressLabel = t.progressDone
+            progress.label = t.progressDone
         }
     }
 
@@ -133,8 +181,8 @@ final class RenameViewModel: ObservableObject {
         lastInputURLs = rows.map(\.sourceURL)
         if rows.isEmpty {
             phase = .idle
-            progressLabel = ""
-            progressValue = 0
+            progress.label = ""
+            progress.value = 0
         }
     }
 
@@ -172,11 +220,14 @@ final class RenameViewModel: ObservableObject {
         guard total > 0 else { return }
 
         renameFeedbackPhase = .working(done: 0, total: total)
-        try? await Task.sleep(for: .milliseconds(60))
+        if total <= 8 {
+            try? await Task.sleep(for: .milliseconds(60))
+        }
 
         var updated = rows
         var successCount = 0
         var failureCount = 0
+        let stepDelay = Self.interRenameDelay(total: total)
 
         for (step, idx) in indices.enumerated() {
             if Task.isCancelled {
@@ -193,7 +244,9 @@ final class RenameViewModel: ObservableObject {
             }
             rows = updated
             renameFeedbackPhase = .working(done: step + 1, total: total)
-            try? await Task.sleep(for: .milliseconds(55))
+            if let stepDelay {
+                try? await Task.sleep(for: stepDelay)
+            }
         }
 
         lastInputURLs = rows.map(\.sourceURL)
@@ -281,8 +334,7 @@ final class RenameViewModel: ObservableObject {
             lastInputURLs = existing.map(\.sourceURL)
             rows = existing
             phase = .ready
-            progressValue = existing.isEmpty ? 0 : 1
-            progressLabel = existing.isEmpty ? "" : t.progressDone
+            setProgress(value: existing.isEmpty ? 0 : 1, label: existing.isEmpty ? "" : t.progressDone, force: true)
             analysisTask = nil
             return
         }
@@ -296,8 +348,7 @@ final class RenameViewModel: ObservableObject {
         rows = builtRows
 
         phase = .extracting
-        progressValue = 0
-        progressLabel = t.progressExtract
+        setProgress(value: 0, label: t.progressExtract, force: true)
 
         let documentCount = pendingIndices.count
         let hasPDF = pendingIndices.contains {
@@ -305,7 +356,7 @@ final class RenameViewModel: ObservableObject {
         }
         if hasPDF {
             phase = .ocr
-            progressLabel = t.progressOCR
+            setProgress(value: progress.value, label: t.progressOCR, force: true)
         }
 
         let extracts = await extractPendingFiles(
@@ -321,6 +372,7 @@ final class RenameViewModel: ObservableObject {
         for outcome in extracts {
             if case .failure(let mergeIdx, let url, let originalName, let message) = outcome {
                 builtRows[mergeIdx] = DocumentFileAnalyzer.makeFailedRow(
+                    id: builtRows[mergeIdx].id,
                     url: url,
                     originalName: originalName,
                     message: message
@@ -343,12 +395,15 @@ final class RenameViewModel: ObservableObject {
                 return
             }
 
-            progressLabel = analysisBatchLabel(
-                documentIndex: progressIdx + 1,
-                documentCount: documentCount,
-                phase: t.progressNL(inferenceBackend: namingInferenceBackend)
+            setProgress(
+                value: 0.45 + (Double(progressIdx) / Double(inferTotal)) * 0.55,
+                label: analysisBatchLabel(
+                    documentIndex: progressIdx + 1,
+                    documentCount: documentCount,
+                    phase: t.progressNL(inferenceBackend: namingInferenceBackend)
+                ),
+                force: true
             )
-            progressValue = 0.45 + (Double(progressIdx) / Double(inferTotal)) * 0.55
 
             let languageMode = outputLanguageMode
             let backend = namingInferenceBackend
@@ -362,6 +417,7 @@ final class RenameViewModel: ObservableObject {
                 inferenceBackend: backend
             )
             builtRows[item.mergeIdx] = DocumentFileAnalyzer.makeCompletedRow(
+                id: builtRows[item.mergeIdx].id,
                 url: item.url,
                 originalName: item.originalName,
                 extension: item.ext,
@@ -373,7 +429,11 @@ final class RenameViewModel: ObservableObject {
                 includePipelineDebug: AppPreferences.showPipelineDebug
             )
             rows = builtRows
-            progressValue = 0.45 + (Double(progressIdx + 1) / Double(inferTotal)) * 0.55
+            setProgress(
+                value: 0.45 + (Double(progressIdx + 1) / Double(inferTotal)) * 0.55,
+                label: progress.label,
+                force: true
+            )
         }
 
         guard run == analysisRun else {
@@ -381,8 +441,7 @@ final class RenameViewModel: ObservableObject {
         }
         rows = builtRows
         phase = .ready
-        progressValue = 1
-        progressLabel = t.progressDone
+        setProgress(value: 1, label: t.progressDone, force: true)
         lastInputURLs = merged
         analysisTask = nil
     }
@@ -413,8 +472,11 @@ final class RenameViewModel: ObservableObject {
         }
         rows = built
         phase = .ready
-        progressValue = built.isEmpty ? 0 : 1
-        progressLabel = built.isEmpty ? "" : t.analysisStopped
+        setProgress(
+            value: built.isEmpty ? 0 : 1,
+            label: built.isEmpty ? "" : t.analysisStopped,
+            force: true
+        )
         lastInputURLs = built.map(\.sourceURL)
         analysisTask = nil
     }
@@ -456,11 +518,14 @@ final class RenameViewModel: ObservableObject {
                 finished += 1
                 outcomes.append(outcome)
                 if run == analysisRun {
-                    progressValue = (Double(finished) / Double(total)) * 0.45
-                    progressLabel = analysisBatchLabel(
-                        documentIndex: finished,
-                        documentCount: pendingIndices.count,
-                        phase: t.progressExtract
+                    setProgress(
+                        value: (Double(finished) / Double(total)) * 0.45,
+                        label: analysisBatchLabel(
+                            documentIndex: finished,
+                            documentCount: pendingIndices.count,
+                            phase: t.progressExtract
+                        ),
+                        force: finished == pendingIndices.count
                     )
                 }
                 if Task.isCancelled {

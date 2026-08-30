@@ -5,6 +5,7 @@ import NomenCore
 /// Der Batch-Loop (Fortschritt, Abbruch) bleibt im ViewModel.
 enum DocumentFileAnalyzer {
     static func makeCompletedRow(
+        id: UUID,
         url: URL,
         originalName: String,
         extension ext: String,
@@ -39,6 +40,7 @@ enum DocumentFileAnalyzer {
                 sample: snap.combinedText,
                 embeddedPDFCount: snap.embeddedCharacterCount,
                 ocrCount: snap.ocrCharacterCount > 0 ? snap.ocrCharacterCount : nil,
+                ocrPageCount: snap.ocrPageCount,
                 usedVisionOCRForSample: snap.usedVisionOCRAsPrimary,
                 package: package,
                 understanding: understanding
@@ -46,7 +48,7 @@ enum DocumentFileAnalyzer {
             : nil
 
         return RenamePreviewRow(
-            id: UUID(),
+            id: id,
             sourceURL: url,
             originalName: originalName,
             proposedName: unique,
@@ -58,9 +60,9 @@ enum DocumentFileAnalyzer {
         )
     }
 
-    static func makeFailedRow(url: URL, originalName: String, message: String) -> RenamePreviewRow {
+    static func makeFailedRow(id: UUID, url: URL, originalName: String, message: String) -> RenamePreviewRow {
         RenamePreviewRow(
-            id: UUID(),
+            id: id,
             sourceURL: url,
             originalName: originalName,
             proposedName: originalName,
@@ -77,6 +79,7 @@ enum DocumentFileAnalyzer {
         sample: String,
         embeddedPDFCount: Int?,
         ocrCount: Int?,
+        ocrPageCount: Int,
         usedVisionOCRForSample: Bool,
         package: DocumentAnalysisPackage,
         understanding: DocumentUnderstandingResult
@@ -89,11 +92,12 @@ enum DocumentFileAnalyzer {
             if usedVisionOCRForSample {
                 let ec = embeddedPDFCount.map { "\($0) chars" } ?? "n/a"
                 let oc = ocrCount.map { "\($0) chars" } ?? "n/a"
-                summary = "PDF · embedded probe: \(ec) · Vision OCR (page 1): \(oc) · sample: \(sample.count) chars"
-                chosenLabel = "Vision OCR (page 1)"
+                let pageLabel = ocrPageRangeLabel(ocrPageCount)
+                summary = "PDF · embedded probe: \(ec) · Vision OCR (\(pageLabel)): \(oc) · sample: \(sample.count) chars"
+                chosenLabel = "Vision OCR (\(pageLabel))"
             } else {
                 let ec = embeddedPDFCount.map { "\($0) chars" } ?? "n/a"
-                summary = "PDF · embedded text: \(ec) (up to 2 pages) · sample: \(sample.count) chars"
+                summary = "PDF · embedded text: \(ec) (up to 3 pages) · sample: \(sample.count) chars"
                 chosenLabel = "Embedded PDF text"
             }
         } else {
@@ -116,5 +120,12 @@ enum DocumentFileAnalyzer {
             usedContentDate: understanding.usedContentDate,
             usedFilenameFallbackForTitle: package.usedFilenameFallbackForTitle
         )
+    }
+
+    private static func ocrPageRangeLabel(_ count: Int) -> String {
+        switch count {
+        case 0, 1: return "page 1"
+        default: return "pages 1–\(count)"
+        }
     }
 }

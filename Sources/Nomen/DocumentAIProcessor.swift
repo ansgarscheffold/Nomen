@@ -11,48 +11,54 @@ enum DocumentAIProcessorError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .ocrFailed:
-            return "PDF konnte nicht für OCR geöffnet werden oder die erste Seite fehlt."
+            return "PDF konnte nicht für OCR geöffnet werden oder es fehlt eine lesbare Seite."
         }
     }
 }
 
 // MARK: - Texterkennung (Vision + PDFKit)
 
-/// Orchestriert **PDF-OCR** nur auf der **ersten Seite** (Thumbnail ~2000 px); sonst Textimport.
+/// PDF: eingebetteter Text bzw. Vision-OCR auf den ersten Seiten (Briefkopf, Typ, Datum, Aussteller).
 enum DocumentAIProcessor {
-    private static let thumbnailSize = NSSize(width: 2000, height: 2000)
+    private static let thumbnailSize = NSSize(width: 1536, height: 1536)
+    /// Deckblatt/Anschreiben oft auf S. 1; Rechnung, Aktenzeichen, Datum häufig erst auf S. 2–3.
+    private static let maxNamingPages = 3
+    private static let embeddedTextEnough = 300
 
     struct ExtractionSnapshot: Sendable {
         var combinedText: String
         var embeddedCharacterCount: Int?
         var ocrCharacterCount: Int
+        var ocrPageCount: Int
         var usedVisionOCRAsPrimary: Bool
     }
 
     static func extractForRenaming(url: URL, extLowercased: String) async throws -> ExtractionSnapshot {
         if extLowercased == SupportedDocumentFormat.pdf.rawValue {
-            // For naming purposes, first 2 pages always contain the key info (letterhead,
-            // document type, date, issuer). Reading 40 pages produces unnecessary noise and
-            // can overwhelm the on-device model with boilerplate from page 3+.
-            let embedded = (try? DocumentTextExtractor.embeddedPDFText(from: url, maxPages: 2)) ?? ""
+            guard let pdf = PDFDocument(url: url) else {
+                throw DocumentAIProcessorError.ocrFailed
+            }
+            let embedded = DocumentTextExtractor.embeddedPDFText(from: pdf, maxPages: maxNamingPages)
             let embeddedCount = embedded.trimmingCharacters(in: .whitespacesAndNewlines).count
 
-            if embeddedCount > 300 {
+            if embeddedCount > embeddedTextEnough {
                 return ExtractionSnapshot(
                     combinedText: embedded,
                     embeddedCharacterCount: embeddedCount,
                     ocrCharacterCount: 0,
+                    ocrPageCount: 0,
                     usedVisionOCRAsPrimary: false
                 )
             }
 
-            // Scanned/image PDF — fall back to Vision OCR on the first page
-            let ocrRaw = try await performFirstPageOCR(at: url)
+            // Scanned/image PDF — OCR der ersten Seiten (nicht nur S. 1: Infos sitzen oft weiter hinten).
+            let (ocrRaw, pagesRead) = try await recognizeTextOnPDFPages(pdf, maxPages: maxNamingPages)
             let ocrCount = ocrRaw.trimmingCharacters(in: .whitespacesAndNewlines).count
             return ExtractionSnapshot(
                 combinedText: ocrRaw.isEmpty ? embedded : ocrRaw,
                 embeddedCharacterCount: embeddedCount,
                 ocrCharacterCount: ocrCount,
+                ocrPageCount: pagesRead,
                 usedVisionOCRAsPrimary: true
             )
         }
@@ -62,18 +68,32 @@ enum DocumentAIProcessor {
             combinedText: raw,
             embeddedCharacterCount: t.count,
             ocrCharacterCount: 0,
+            ocrPageCount: 0,
             usedVisionOCRAsPrimary: false
         )
     }
 
-    private static func performFirstPageOCR(at url: URL) async throws -> String {
-        guard let pdf = PDFDocument(url: url) else {
+    private static func recognizeTextOnPDFPages(
+        _ pdf: PDFDocument,
+        maxPages: Int
+    ) async throws -> (text: String, pagesRead: Int) {
+        let limit = min(pdf.pageCount, maxPages)
+        guard limit > 0, pdf.page(at: 0) != nil else {
             throw DocumentAIProcessorError.ocrFailed
         }
-        guard let page0 = pdf.page(at: 0) else {
-            throw DocumentAIProcessorError.ocrFailed
+        var parts: [String] = []
+        parts.reserveCapacity(limit)
+        var pagesRead = 0
+        for i in 0 ..< limit {
+            if Task.isCancelled { break }
+            guard let page = pdf.page(at: i) else { continue }
+            let pageText = (try? await recognizeTextOnPDFPage(page)) ?? ""
+            pagesRead += 1
+            if !pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(pageText)
+            }
         }
-        return try await recognizeTextOnPDFPage(page0)
+        return (parts.joined(separator: "\n"), pagesRead)
     }
 
     private static func recognizeTextOnPDFPage(_ page: PDFPage) async throws -> String {

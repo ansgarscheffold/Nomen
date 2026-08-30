@@ -14,6 +14,23 @@ public enum DocumentNamingPipeline {
         df.dateFormat = "yyyy-MM-dd"
         return df
     }()
+    private static let gmtGregorian: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal
+    }()
+    private static let looseDateJSONRegex = try! NSRegularExpression(
+        pattern: #""date"\s*:\s*"(\d{4}-\d{2}-\d{2})""#
+    )
+    private static let looseTitleJSONRegexes: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: #""title"\s*:\s*"([^"]*)""#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #""archiveTitle"\s*:\s*"([^"]*)""#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #""archive_title"\s*:\s*"([^"]*)""#, options: .caseInsensitive),
+    ]
+    private static let looseTextJSONRegex = try! NSRegularExpression(
+        pattern: #""text"\s*:\s*"([^"]*)""#,
+        options: .caseInsensitive
+    )
 
     public static func formattedPromptDate(_ date: Date) -> String {
         promptDateLock.lock()
@@ -106,6 +123,7 @@ public enum DocumentNamingPipeline {
 
     /// Sobald das erste vollständige `{…}` geschlossen ist, abbrechen (spart Tokens, verhindert Nachplappern).
     public static func ggufShouldStopGeneration(leadIn: String, generatedSuffix: String) -> Bool {
+        guard generatedSuffix.contains("}") else { return false }
         let full = leadIn + generatedSuffix
         return extractFirstBalancedJSONObject(from: full) != nil
     }
@@ -214,19 +232,52 @@ public enum DocumentNamingPipeline {
             return (fileModificationDate, false)
         }
         let head = String(trimmed.prefix(10))
-        guard head.range(of: "^\\d{4}-\\d{2}-\\d{2}$", options: .regularExpression) != nil else {
+        guard isYearMonthDay(head) else {
             return (fileModificationDate, false)
         }
-        let fmt = ISO8601DateFormatter()
-        fmt.formatOptions = [.withFullDate, .withDashSeparatorInDate]
-        guard let d = fmt.date(from: head) else {
+        guard let d = dateFromYearMonthDay(head) else {
             return (fileModificationDate, false)
         }
-        let y = Calendar(identifier: .gregorian).component(.year, from: d)
+        let y = gmtGregorian.component(.year, from: d)
         if y < 1990 || y > 2040 {
             return (fileModificationDate, false)
         }
         return (d, true)
+    }
+
+    /// `YYYY-MM-DD` without compiling a regex on every model reply.
+    private static func isYearMonthDay(_ s: String) -> Bool {
+        let utf8 = s.utf8
+        guard utf8.count == 10 else { return false }
+        var i = utf8.startIndex
+        func digits(_ count: Int) -> Bool {
+            for _ in 0..<count {
+                guard i < utf8.endIndex else { return false }
+                let v = utf8[i]
+                guard v >= 48, v <= 57 else { return false }
+                i = utf8.index(after: i)
+            }
+            return true
+        }
+        func dash() -> Bool {
+            guard i < utf8.endIndex, utf8[i] == 45 else { return false }
+            i = utf8.index(after: i)
+            return true
+        }
+        return digits(4) && dash() && digits(2) && dash() && digits(2) && i == utf8.endIndex
+    }
+
+    private static func dateFromYearMonthDay(_ head: String) -> Date? {
+        guard let y = Int(head.prefix(4)),
+              let m = Int(head.dropFirst(5).prefix(2)),
+              let d = Int(head.dropFirst(8).prefix(2)) else {
+            return nil
+        }
+        var comps = DateComponents()
+        comps.year = y
+        comps.month = m
+        comps.day = d
+        return gmtGregorian.date(from: comps)
     }
 
     public static func isWeakGenericTitle(_ slug: String) -> Bool {
@@ -237,7 +288,7 @@ public enum DocumentNamingPipeline {
         if lower.count <= 1 {
             return true
         }
-        if lower.range(of: "^[0-9\\s\\-:]+$", options: .regularExpression) != nil {
+        if lower.allSatisfy({ $0.isNumber || $0.isWhitespace || $0 == "-" || $0 == ":" }) {
             return true
         }
         return false
@@ -397,22 +448,15 @@ public enum DocumentNamingPipeline {
         let full = NSRange(location: 0, length: nsLen)
 
         var dateStr: String?
-        if let re = try? NSRegularExpression(pattern: #""date"\s*:\s*"(\d{4}-\d{2}-\d{2})""#, options: []),
-           let m = re.firstMatch(in: raw, options: [], range: full),
+        if let m = looseDateJSONRegex.firstMatch(in: raw, options: [], range: full),
            m.numberOfRanges > 1,
            let r = Range(m.range(at: 1), in: raw) {
             dateStr = String(raw[r])
         }
 
         var titleStr: String?
-        let titleRes = [
-            #""title"\s*:\s*"([^"]*)""#,
-            #""archiveTitle"\s*:\s*"([^"]*)""#,
-            #""archive_title"\s*:\s*"([^"]*)""#,
-        ]
-        for pat in titleRes {
-            guard let re = try? NSRegularExpression(pattern: pat, options: .caseInsensitive),
-                  let m = re.firstMatch(in: raw, options: [], range: full),
+        for re in looseTitleJSONRegexes {
+            guard let m = re.firstMatch(in: raw, options: [], range: full),
                   m.numberOfRanges > 1,
                   let r = Range(m.range(at: 1), in: raw) else { continue }
             let t = String(raw[r])
@@ -422,8 +466,7 @@ public enum DocumentNamingPipeline {
             }
         }
         if titleStr == nil,
-           let re = try? NSRegularExpression(pattern: #""text"\s*:\s*"([^"]*)""#, options: .caseInsensitive),
-           let m = re.firstMatch(in: raw, options: [], range: full),
+           let m = looseTextJSONRegex.firstMatch(in: raw, options: [], range: full),
            m.numberOfRanges > 1,
            let r = Range(m.range(at: 1), in: raw) {
             let t = String(raw[r])

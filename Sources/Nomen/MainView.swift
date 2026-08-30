@@ -85,6 +85,7 @@ struct MainView: View {
             model.refreshAfterSchemaChange()
         }
         .onChange(of: model.rows) { _, newRows in
+            guard !tableSelection.isEmpty else { return }
             let valid = Set(newRows.map(\.id))
             tableSelection = tableSelection.intersection(valid)
         }
@@ -146,33 +147,9 @@ struct MainView: View {
                 renameToolbarFeedback
                     .frame(minWidth: 100, maxWidth: 440, alignment: .leading)
             } else if model.isBusy {
-                HStack(alignment: .center, spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(model.progressLabel)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(minWidth: 100, maxWidth: 360, alignment: .leading)
-                    ProgressView(value: model.progressValue)
-                        .progressViewStyle(.linear)
-                        .tint(Color.accentColor)
-                        .frame(minWidth: 140, idealWidth: 260, maxWidth: 340, alignment: .center)
-                    Button(action: { model.stopAnalysis() }) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(t.stop)
-                    .accessibilityLabel(t.stop)
-                }
+                AnalysisBusyProgress(progress: model.progress, t: t, onStop: { model.stopAnalysis() })
             } else if model.phase == .ready, !model.rows.isEmpty {
-                Text(model.progressLabel)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                AnalysisDoneLabel(progress: model.progress)
             }
 
             Spacer(minLength: 8)
@@ -249,99 +226,20 @@ struct MainView: View {
     }
 
     private var previewTable: some View {
-        Group {
-            if let err = model.errorMessage {
-                ContentUnavailableView(
-                    t.emptyErrorTitle,
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(err)
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.rows.isEmpty {
-                ContentUnavailableView(
-                    t.emptyNoFilesTitle,
-                    systemImage: "doc.text.magnifyingglass",
-                    description: Text(t.emptyNoFilesDescription)
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Table(model.rows, selection: $tableSelection) {
-                    TableColumn(t.columnOldName) { row in
-                        Text(row.originalName)
-                            .lineLimit(2)
-                            .foregroundStyle(row.isAnalysisPlaceholder ? .secondary : .primary)
-                            .italic(row.isAnalysisPlaceholder)
-                    }
-                    .width(min: 200, ideal: 300, max: .infinity)
-
-                    TableColumn(t.columnNewName) { row in
-                        Text(row.proposedName)
-                            .font(row.isAnalysisPlaceholder ? .body : .body.weight(.semibold))
-                            .lineLimit(2)
-                            .foregroundStyle(row.isAnalysisPlaceholder ? .secondary : .primary)
-                            .italic(row.isAnalysisPlaceholder)
-                    }
-                    .width(min: 220, ideal: 380, max: .infinity)
-
-                    TableColumn(t.columnHint) { row in
-                        if let msg = row.statusMessage, !row.isAnalysisPlaceholder {
-                            Text(msg)
-                                .font(.footnote)
-                                .foregroundStyle(row.usedFallbackDate ? .orange : .secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                    .width(min: 100, ideal: 200, max: .infinity)
-                }
-                .tableStyle(.inset(alternatesRowBackgrounds: true))
-                .focusable()
-                .focused($tableKeyboardFocused)
-                .onKeyPress(.space, phases: .down) { _ in
-                    guard !tableSelection.isEmpty else { return .ignored }
-                    openQuickLookForSelection()
-                    return .handled
-                }
-                .contextMenu(forSelectionType: RenamePreviewRow.ID.self) { ids in
-                    if !ids.isEmpty {
-                        let ready = ids.allSatisfy { id in
-                            model.rows.first(where: { $0.id == id })?.isAnalysisPlaceholder == false
-                        }
-                        Button {
-                            model.renameRows(ids: ids)
-                        } label: {
-                            Label(t.contextRenameSelected, systemImage: "pencil")
-                        }
-                        .disabled(!ready || model.isBusy || model.isRenaming)
-
-                        if ids.count == 1, let id = ids.first,
-                           let row = model.rows.first(where: { $0.id == id }) {
-                            Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([row.sourceURL])
-                            } label: {
-                                Label(t.contextShowInFinder, systemImage: "folder")
-                            }
-                        }
-
-                        Divider()
-
-                        Button(role: .destructive) {
-                            model.removeRows(ids: ids)
-                        } label: {
-                            Label(t.contextRemoveFromList, systemImage: "minus.circle")
-                        }
-
-                        Divider()
-                    }
-
-                    Button(role: .destructive) {
-                        model.clear()
-                    } label: {
-                        Label(t.clear, systemImage: "trash")
-                    }
-                    .disabled(model.rows.isEmpty)
-                }
-            }
-        }
+        PreviewTablePane(
+            rows: model.rows,
+            errorMessage: model.errorMessage,
+            t: t,
+            isBusy: model.isBusy,
+            isRenaming: model.isRenaming,
+            tableSelection: $tableSelection,
+            tableKeyboardFocused: $tableKeyboardFocused,
+            onRename: { model.renameRows(ids: $0) },
+            onShowInFinder: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
+            onRemove: { model.removeRows(ids: $0) },
+            onClear: { model.clear() },
+            onQuickLook: { quickLook.show(urls: $0) }
+        )
     }
 
     @ViewBuilder
@@ -403,44 +301,13 @@ struct MainView: View {
     }
 
     private var pipelineDebugPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(t.debugInspectorTitle)
-                .font(.subheadline.weight(.semibold))
-
-            if tableSelection.count != 1 {
-                Text(t.debugInspectorHint)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if let id = tableSelection.first,
-                      let row = model.rows.first(where: { $0.id == id }) {
-                if let dbg = row.pipelineDebug {
-                    ScrollView {
-                        Text(verbatim: dbg.formattedReport(localizedHeaders: t.pipelineDebugHeaders))
-                            .font(.system(.footnote, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(minHeight: 160, maxHeight: 320)
-                } else {
-                    Text(t.debugInspectorNoData)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35))
-    }
-
-    private func openQuickLookForSelection() {
-        guard !tableSelection.isEmpty else { return }
-        let ids = tableSelection
-        let urls = model.rows
-            .filter { ids.contains($0.id) }
-            .map(\.sourceURL)
-        guard !urls.isEmpty else { return }
-        quickLook.show(urls: urls)
+        let selected = tableSelection.count == 1 ? tableSelection.first.flatMap(model.row(id:)) : nil
+        return PipelineDebugPane(
+            selectionCount: tableSelection.count,
+            snapshot: selected?.pipelineDebug,
+            headers: t.pipelineDebugHeaders,
+            t: t
+        )
     }
 
     /// Neue Installation: Onboarding anzeigen. App-Update von einer Version ohne Onboarding: einmalig als erledigt markieren.
@@ -468,6 +335,199 @@ struct MainView: View {
             guard response == .OK else { return }
             model.addFiles(urls: panel.urls)
         }
+    }
+}
+
+private struct AnalysisBusyProgress: View {
+    @ObservedObject var progress: RenameProgressState
+    let t: L10n
+    let onStop: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text(progress.label)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(minWidth: 100, maxWidth: 360, alignment: .leading)
+            ProgressView(value: progress.value)
+                .progressViewStyle(.linear)
+                .tint(Color.accentColor)
+                .frame(minWidth: 140, idealWidth: 260, maxWidth: 340, alignment: .center)
+            Button(action: onStop) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(t.stop)
+            .accessibilityLabel(t.stop)
+        }
+    }
+}
+
+private struct AnalysisDoneLabel: View {
+    @ObservedObject var progress: RenameProgressState
+
+    var body: some View {
+        Text(progress.label)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// Table content is passed as values so progress ticks on `RenameProgressState` do not rebuild it.
+private struct PreviewTablePane: View {
+    let rows: [RenamePreviewRow]
+    let errorMessage: String?
+    let t: L10n
+    let isBusy: Bool
+    let isRenaming: Bool
+    @Binding var tableSelection: Set<RenamePreviewRow.ID>
+    var tableKeyboardFocused: FocusState<Bool>.Binding
+    let onRename: (Set<UUID>) -> Void
+    let onShowInFinder: (URL) -> Void
+    let onRemove: (Set<UUID>) -> Void
+    let onClear: () -> Void
+    let onQuickLook: ([URL]) -> Void
+
+    var body: some View {
+        Group {
+            if let err = errorMessage {
+                ContentUnavailableView(
+                    t.emptyErrorTitle,
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(err)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if rows.isEmpty {
+                ContentUnavailableView(
+                    t.emptyNoFilesTitle,
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text(t.emptyNoFilesDescription)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Table(rows, selection: $tableSelection) {
+                    TableColumn(t.columnOldName) { row in
+                        Text(row.originalName)
+                            .lineLimit(2)
+                            .foregroundStyle(row.isAnalysisPlaceholder ? .secondary : .primary)
+                            .italic(row.isAnalysisPlaceholder)
+                    }
+                    .width(min: 200, ideal: 300, max: .infinity)
+
+                    TableColumn(t.columnNewName) { row in
+                        Text(row.proposedName)
+                            .font(row.isAnalysisPlaceholder ? .body : .body.weight(.semibold))
+                            .lineLimit(2)
+                            .foregroundStyle(row.isAnalysisPlaceholder ? .secondary : .primary)
+                            .italic(row.isAnalysisPlaceholder)
+                    }
+                    .width(min: 220, ideal: 380, max: .infinity)
+
+                    TableColumn(t.columnHint) { row in
+                        if let msg = row.statusMessage, !row.isAnalysisPlaceholder {
+                            Text(msg)
+                                .font(.footnote)
+                                .foregroundStyle(row.usedFallbackDate ? .orange : .secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .width(min: 100, ideal: 200, max: .infinity)
+                }
+                .tableStyle(.inset(alternatesRowBackgrounds: true))
+                .focusable()
+                .focused(tableKeyboardFocused)
+                .transaction { txn in
+                    if isBusy { txn.disablesAnimations = true }
+                }
+                .onKeyPress(.space, phases: .down) { _ in
+                    guard !tableSelection.isEmpty else { return .ignored }
+                    let urls = rows.compactMap { tableSelection.contains($0.id) ? $0.sourceURL : nil }
+                    guard !urls.isEmpty else { return .ignored }
+                    onQuickLook(urls)
+                    return .handled
+                }
+                .contextMenu(forSelectionType: RenamePreviewRow.ID.self) { ids in
+                    if !ids.isEmpty {
+                        let rowLookup = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+                        let ready = ids.allSatisfy { rowLookup[$0]?.isAnalysisPlaceholder == false }
+                        Button {
+                            onRename(ids)
+                        } label: {
+                            Label(t.contextRenameSelected, systemImage: "pencil")
+                        }
+                        .disabled(!ready || isBusy || isRenaming)
+
+                        if ids.count == 1, let id = ids.first, let row = rowLookup[id] {
+                            Button {
+                                onShowInFinder(row.sourceURL)
+                            } label: {
+                                Label(t.contextShowInFinder, systemImage: "folder")
+                            }
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            onRemove(ids)
+                        } label: {
+                            Label(t.contextRemoveFromList, systemImage: "minus.circle")
+                        }
+
+                        Divider()
+                    }
+
+                    Button(role: .destructive) {
+                        onClear()
+                    } label: {
+                        Label(t.clear, systemImage: "trash")
+                    }
+                    .disabled(rows.isEmpty)
+                }
+            }
+        }
+    }
+}
+
+private struct PipelineDebugPane: View {
+    let selectionCount: Int
+    let snapshot: PipelineDebugSnapshot?
+    let headers: PipelineDebugL10n
+    let t: L10n
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(t.debugInspectorTitle)
+                .font(.subheadline.weight(.semibold))
+
+            if selectionCount != 1 {
+                Text(t.debugInspectorHint)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if let snapshot {
+                let report = snapshot.formattedReport(localizedHeaders: headers)
+                ScrollView {
+                    Text(verbatim: report)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 160, maxHeight: 320)
+            } else {
+                Text(t.debugInspectorNoData)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35))
     }
 }
 

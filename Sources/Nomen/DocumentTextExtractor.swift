@@ -22,6 +22,10 @@ enum ExtractionError: LocalizedError {
 
 enum DocumentTextExtractor {
     private static let maxBytes = 512_000
+    private static let docxTextRunRegex = try! NSRegularExpression(
+        pattern: #"<w:t[^>]*>(.*?)</w:t>"#,
+        options: [.dotMatchesLineSeparators]
+    )
 
     static func extractText(from url: URL) throws -> String {
         switch SupportedDocumentFormat(rawValue: url.pathExtension.lowercased()) {
@@ -41,17 +45,33 @@ enum DocumentTextExtractor {
     /// Raw text from the PDF’s embedded string layer.
     /// - Parameter maxPages: Maximum number of pages to read (default: all pages up to 40).
     static func embeddedPDFText(from url: URL, maxPages: Int = 40) throws -> String {
-        try extractPDF(url, maxPages: maxPages)
+        guard let doc = PDFDocument(url: url) else {
+            throw ExtractionError.couldNotOpen
+        }
+        return embeddedPDFText(from: doc, maxPages: maxPages)
+    }
+
+    static func embeddedPDFText(from document: PDFDocument, maxPages: Int = 40) -> String {
+        extractPDF(document, maxPages: maxPages)
     }
 
     private static func extractPDF(_ url: URL, maxPages: Int = 40) throws -> String {
         guard let doc = PDFDocument(url: url) else {
             throw ExtractionError.couldNotOpen
         }
+        let joined = extractPDF(doc, maxPages: maxPages)
+        if joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ""
+        }
+        return joined
+    }
+
+    private static func extractPDF(_ document: PDFDocument, maxPages: Int) -> String {
         var parts: [String] = []
-        let limit = min(doc.pageCount, maxPages)
+        let limit = min(document.pageCount, maxPages)
+        parts.reserveCapacity(limit)
         for i in 0 ..< limit {
-            guard let page = doc.page(at: i), let s = page.string, !s.isEmpty else { continue }
+            guard let page = document.page(at: i), let s = page.string, !s.isEmpty else { continue }
             parts.append(s)
         }
         let joined = parts.joined(separator: "\n")
@@ -103,19 +123,19 @@ enum DocumentTextExtractor {
     }
 
     private static func xmlDocxPlainText(from xml: String) -> String {
-        let pattern = #"<w:t[^>]*>(.*?)</w:t>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-            return ""
-        }
         let ns = xml as NSString
         let full = NSRange(location: 0, length: ns.length)
-        let matches = regex.matches(in: xml, options: [], range: full)
+        let matches = docxTextRunRegex.matches(in: xml, options: [], range: full)
         var parts: [String] = []
-        parts.reserveCapacity(matches.count)
+        parts.reserveCapacity(min(matches.count, 512))
+        var total = 0
         for m in matches where m.numberOfRanges > 1 {
             let r = m.range(at: 1)
             guard let range = Range(r, in: xml) else { continue }
-            parts.append(String(xml[range]))
+            let piece = String(xml[range])
+            parts.append(piece)
+            total += piece.count + 1
+            if total >= 8_000 { break }
         }
         return parts.joined(separator: " ")
     }
