@@ -251,6 +251,15 @@ enum NomenCoreChecks {
             DroppedFileURLFilter.accept(URL(string: "https://example.com/a.pdf")!) == nil
                 && DroppedFileURLFilter.accept(URL(fileURLWithPath: "/tmp/a.pdf")) != nil
         }
+        check("drop filter rejects raw paths") {
+            DroppedFileURLFilter.acceptFileURLString("/tmp/a.pdf") == nil
+                && DroppedFileURLFilter.acceptFileURLString("~/Documents/a.pdf") == nil
+                && DroppedFileURLFilter.acceptFileURLString("file:///tmp/a.pdf") != nil
+        }
+        check("drop filter pasteboard file url bytes") {
+            let url = URL(fileURLWithPath: "/tmp/brief.pdf")
+            return DroppedFileURLFilter.acceptPasteboardData(url.dataRepresentation)?.isFileURL == true
+        }
         check("rename name stays in directory") {
             (try? FileRenameOperations.confinedFileName("../secret.pdf")) == nil
                 && (try? FileRenameOperations.confinedFileName("ok.pdf")) == "ok.pdf"

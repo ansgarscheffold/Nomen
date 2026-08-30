@@ -234,7 +234,7 @@ struct MainView: View {
             guard !model.isRenaming else { return }
             presentOpenPanel()
         }
-        .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
+        .onDrop(of: [.fileURL, .url], isTargeted: $isDragTargeted) { providers in
             guard !model.isRenaming else { return false }
             Task { @MainActor in
                 let urls = await DroppedFileURLCollector.collect(from: providers)
