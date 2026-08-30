@@ -29,7 +29,7 @@ enum FilenameFormatting {
             yearTwoDigit: yy
         )
         if cleanedTitle.isEmpty {
-            cleanedTitle = "Document"
+            cleanedTitle = FilenameSanitizer.archiveFallbackLiteral
         }
 
         let base: String
@@ -100,6 +100,14 @@ enum FilenameFormatting {
 }
 
 enum FilenameSanitizer {
+    static let archiveFallbackLiteral = "Document"
+
+    /// Dateiname-Stamm → Archiv-Titel, wenn das Modell keinen brauchbaren Titel liefert.
+    static func archiveFallbackTitle(fromFilenameStem stem: String) -> String {
+        let slug = cleanStemForTitle(stem)
+        return slug.isEmpty ? archiveFallbackLiteral : slug
+    }
+
     /// Strips date/time prefixes and noise tokens from a raw filename stem so the
     /// fallback title doesn't duplicate the date the naming schema will prepend,
     /// and doesn't include case numbers, timestamps, or other non-semantic tokens.

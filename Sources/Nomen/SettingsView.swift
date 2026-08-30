@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage("nomen.appLanguage") private var languageRaw = AppLanguage.english.rawValue
-    @AppStorage("nomen.outputLanguage") private var outputLanguageRaw = OutputLanguageMode.followDocument.rawValue
-    @AppStorage("nomen.namingInferenceBackend") private var inferenceRaw = NamingInferenceBackend.appleFoundation.rawValue
-    @AppStorage("nomen.showPipelineDebug") private var showPipelineDebug = false
-    @AppStorage("nomen.clearListAfterRename") private var clearListAfterRename = true
+    @AppStorage(AppPreferenceKey.appLanguage) private var languageRaw = AppLanguage.english.rawValue
+    @AppStorage(AppPreferenceKey.outputLanguage) private var outputLanguageRaw = OutputLanguageMode.followDocument.rawValue
+    @AppStorage(AppPreferenceKey.namingInferenceBackend) private var inferenceRaw = NamingInferenceBackend.appleFoundation.rawValue
+    @AppStorage(AppPreferenceKey.showPipelineDebug) private var showPipelineDebug = false
+    @AppStorage(AppPreferenceKey.clearListAfterRename) private var clearListAfterRename = true
 
     private var language: AppLanguage { AppLanguage(rawValue: languageRaw) ?? .english }
     private var t: L10n { L10n(language) }

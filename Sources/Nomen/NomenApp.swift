@@ -44,8 +44,7 @@ struct NomenApp: App {
     }
 
     private func currentAppLanguage() -> AppLanguage {
-        let raw = UserDefaults.standard.string(forKey: "nomen.appLanguage")
-        return AppLanguage(rawValue: raw ?? AppLanguage.english.rawValue) ?? .english
+        AppPreferences.appLanguage
     }
 }
 

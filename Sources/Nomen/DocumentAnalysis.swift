@@ -13,6 +13,49 @@ struct DocumentAnalysisPackage: Sendable {
     let usedFilenameFallbackForTitle: Bool
 }
 
+extension DocumentAnalysisPackage {
+    static func filenameFallback(
+        fallbackFilenameStem: String,
+        fileModificationDate: Date,
+        errorStep: String?,
+        modelRawReply: String? = nil
+    ) -> DocumentAnalysisPackage {
+        DocumentAnalysisPackage(
+            result: OnDeviceDocumentAnalyzer.fallbackWithoutModel(
+                fallbackFilenameStem: fallbackFilenameStem,
+                fileModificationDate: fileModificationDate
+            ),
+            modelRawReply: modelRawReply,
+            jsonSuggestedTitle: nil,
+            jsonDocumentDateISO: nil,
+            jsonDateFromDocument: nil,
+            errorStep: errorStep,
+            usedFilenameFallbackForTitle: true
+        )
+    }
+
+    static func titledFallback(
+        title: String,
+        fileModificationDate: Date,
+        errorStep: String?,
+        modelRawReply: String? = nil
+    ) -> DocumentAnalysisPackage {
+        DocumentAnalysisPackage(
+            result: DocumentUnderstandingResult(
+                title: title,
+                documentDate: fileModificationDate,
+                usedContentDate: false
+            ),
+            modelRawReply: modelRawReply,
+            jsonSuggestedTitle: nil,
+            jsonDocumentDateISO: nil,
+            jsonDateFromDocument: nil,
+            errorStep: errorStep,
+            usedFilenameFallbackForTitle: true
+        )
+    }
+}
+
 enum DocumentAnalysisError: LocalizedError {
     case foundationModelsSDKMissing
     case requiresMacOS26
@@ -37,7 +80,7 @@ enum DocumentAnalysisError: LocalizedError {
 }
 
 enum OnDeviceDocumentAnalyzer {
-    private static let log = Logger(subsystem: "nomen", category: "analysis")
+    private static let log = Logger(subsystem: NomenLog.subsystem, category: "analysis")
 
     /// Always returns a usable `result`; errors are described in `errorStep` and raw model text in `modelRawReply` when present.
     static func analyzePackage(
@@ -70,26 +113,16 @@ enum OnDeviceDocumentAnalyzer {
                 outputLanguageMode: outputLanguageMode
             )
         }
-        let fb = fallbackWithoutModel(fallbackFilenameStem: fallbackFilenameStem, fileModificationDate: fileModificationDate)
-        return DocumentAnalysisPackage(
-            result: fb,
-            modelRawReply: nil,
-            jsonSuggestedTitle: nil,
-            jsonDocumentDateISO: nil,
-            jsonDateFromDocument: nil,
-            errorStep: String(describing: DocumentAnalysisError.requiresMacOS26),
-            usedFilenameFallbackForTitle: true
+        return DocumentAnalysisPackage.filenameFallback(
+            fallbackFilenameStem: fallbackFilenameStem,
+            fileModificationDate: fileModificationDate,
+            errorStep: String(describing: DocumentAnalysisError.requiresMacOS26)
         )
         #else
-        let fb = fallbackWithoutModel(fallbackFilenameStem: fallbackFilenameStem, fileModificationDate: fileModificationDate)
-        return DocumentAnalysisPackage(
-            result: fb,
-            modelRawReply: nil,
-            jsonSuggestedTitle: nil,
-            jsonDocumentDateISO: nil,
-            jsonDateFromDocument: nil,
-            errorStep: String(describing: DocumentAnalysisError.foundationModelsSDKMissing),
-            usedFilenameFallbackForTitle: true
+        return DocumentAnalysisPackage.filenameFallback(
+            fallbackFilenameStem: fallbackFilenameStem,
+            fileModificationDate: fileModificationDate,
+            errorStep: String(describing: DocumentAnalysisError.foundationModelsSDKMissing)
         )
         #endif
     }
@@ -98,8 +131,7 @@ enum OnDeviceDocumentAnalyzer {
         fallbackFilenameStem: String,
         fileModificationDate: Date
     ) -> DocumentUnderstandingResult {
-        let slug = FilenameSanitizer.cleanStemForTitle(fallbackFilenameStem)
-        let title = slug.isEmpty ? "Document" : slug
+        let title = FilenameSanitizer.archiveFallbackTitle(fromFilenameStem: fallbackFilenameStem)
         return DocumentUnderstandingResult(
             title: title,
             documentDate: fileModificationDate,

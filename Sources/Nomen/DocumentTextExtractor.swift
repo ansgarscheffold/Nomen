@@ -23,18 +23,17 @@ enum DocumentTextExtractor {
     private static let maxBytes = 512_000
 
     static func extractText(from url: URL) throws -> String {
-        let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "pdf":
+        switch SupportedDocumentFormat(rawValue: url.pathExtension.lowercased()) {
+        case .pdf:
             return try extractPDF(url)
-        case "txt", "md", "markdown", "csv", "log":
+        case .txt, .md, .markdown, .csv, .log:
             return try extractPlain(url)
-        case "rtf", "rtfd":
+        case .rtf, .rtfd:
             return try extractRTF(url)
-        case "docx":
+        case .docx:
             return try extractDOCX(url)
-        default:
-            throw ExtractionError.unsupportedType(ext)
+        case nil:
+            throw ExtractionError.unsupportedType(url.pathExtension.lowercased())
         }
     }
 

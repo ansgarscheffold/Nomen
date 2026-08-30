@@ -3,7 +3,7 @@ import os.log
 
 /// On-Device-Benennung mit lokalem GGUF (Qwen2.5-7B-Instruct) über llama.cpp — gleiche Prompts wie Foundation + JSON-Prefill.
 enum DocumentLlamaNaming {
-    private static let log = Logger(subsystem: "nomen", category: "DocumentLlamaNaming")
+    private static let log = Logger(subsystem: NomenLog.subsystem, category: "DocumentLlamaNaming")
 
     static func analyzePackage(
         sampleText: String,
@@ -12,38 +12,24 @@ enum DocumentLlamaNaming {
         localeIdentifier: String,
         outputLanguageMode: OutputLanguageMode
     ) async -> DocumentAnalysisPackage {
-        let fallbackTitleStem = FilenameSanitizer.cleanStemForTitle(fallbackFilenameStem)
-        let fallbackTitle = fallbackTitleStem.isEmpty ? "Document" : fallbackTitleStem
-
         guard QwenGGUFModelSupport.isDownloaded else {
-            let fb = OnDeviceDocumentAnalyzer.fallbackWithoutModel(
+            return DocumentAnalysisPackage.filenameFallback(
                 fallbackFilenameStem: fallbackFilenameStem,
-                fileModificationDate: fileModificationDate
-            )
-            return DocumentAnalysisPackage(
-                result: fb,
-                modelRawReply: nil,
-                jsonSuggestedTitle: nil,
-                jsonDocumentDateISO: nil,
-                jsonDateFromDocument: nil,
-                errorStep: String(describing: DocumentAnalysisError.ggufModelFileMissing),
-                usedFilenameFallbackForTitle: true
+                fileModificationDate: fileModificationDate,
+                errorStep: String(describing: DocumentAnalysisError.ggufModelFileMissing)
             )
         }
 
         let modelLocaleId = DocumentNamingPipeline.instructionLocaleIdForLlamaInference(
             uiLocaleIdentifier: localeIdentifier
         )
-        let instructions = DocumentNamingPipeline.buildInstructions(
-            modelLocaleId: modelLocaleId,
-            outputLanguageMode: outputLanguageMode,
-            uiLocaleIdentifier: localeIdentifier
-        )
-        let userPrompt = DocumentNamingPipeline.buildUserPrompt(
+        let (instructions, userPrompt, fallbackTitle) = DocumentNamingPipeline.prompts(
             sampleText: sampleText,
             fileModificationDate: fileModificationDate,
             fallbackFilenameStem: fallbackFilenameStem,
-            excerptCharacterLimit: 8000
+            modelLocaleId: modelLocaleId,
+            outputLanguageMode: outputLanguageMode,
+            uiLocaleIdentifier: localeIdentifier
         )
         let datePrefill = DocumentNamingPipeline.qwenAssistantJSONDatePrefill
         let fullPrompt = Qwen25InstructChatTemplate.buildPrompt(
@@ -71,19 +57,10 @@ enum DocumentLlamaNaming {
             )
         } catch {
             log.error("Llama inference failed: \(String(describing: error), privacy: .public)")
-            let fb = DocumentUnderstandingResult(
+            return DocumentAnalysisPackage.titledFallback(
                 title: fallbackTitle,
-                documentDate: fileModificationDate,
-                usedContentDate: false
-            )
-            return DocumentAnalysisPackage(
-                result: fb,
-                modelRawReply: nil,
-                jsonSuggestedTitle: nil,
-                jsonDocumentDateISO: nil,
-                jsonDateFromDocument: nil,
-                errorStep: error.localizedDescription,
-                usedFilenameFallbackForTitle: true
+                fileModificationDate: fileModificationDate,
+                errorStep: error.localizedDescription
             )
         }
     }

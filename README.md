@@ -116,4 +116,10 @@ You can pass extra flags through to SwiftPM, e.g.:
 5. Wait for analysis; review the **preview** table and status messages.
 6. **Rename** selected rows (or all); keep backups until you are satisfied.
 
-<a href="https://www.buymeacoffee.com/ansgarscheffold" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+## Repository Layout (high level)
+
+- `logo.svg`, `screen1.png`, `screen2.png`, `screen3.png` — README assets (repository root)
+- `Sources/Nomen/` — SwiftUI app, pipeline, extractors, model runners
+- `scripts/build-app.sh` — release build and `.app` bundling (includes `llama.framework` and optional icon)
+- `Resources/` — app icon assets (`AppIcon.iconset`) when present
+- `Nomen.entitlements` — macOS entitlements for the app target

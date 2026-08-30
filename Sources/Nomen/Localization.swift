@@ -14,7 +14,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
-struct L10n {
+struct L10n: Sendable {
     var lang: AppLanguage
 
     init(_ lang: AppLanguage) {

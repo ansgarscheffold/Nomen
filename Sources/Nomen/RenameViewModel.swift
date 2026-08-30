@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import UniformTypeIdentifiers
 
 @MainActor
 final class RenameViewModel: ObservableObject {
@@ -45,7 +44,7 @@ final class RenameViewModel: ObservableObject {
     func addFiles(urls: [URL]) {
         guard !isRenaming else { return }
         errorMessage = nil
-        let filtered = urls.filter { isSupported($0) }
+        let filtered = urls.filter { SupportedDocumentFormat.isSupported(url: $0) }
         guard !filtered.isEmpty else {
             errorMessage = t.noSupportedFiles
             return
@@ -104,7 +103,7 @@ final class RenameViewModel: ObservableObject {
                 originalExtension: ext
             )
             let directory = updated[i].sourceURL.deletingLastPathComponent()
-            let unique = uniquifyFilename(
+            let unique = FileRenameOperations.uniquifyFilename(
                 desiredName: proposedBase,
                 directory: directory,
                 ignoreIfSameAs: updated[i].sourceURL
@@ -152,10 +151,7 @@ final class RenameViewModel: ObservableObject {
     }
 
     private var clearListAfterSuccessfulRename: Bool {
-        if UserDefaults.standard.object(forKey: "nomen.clearListAfterRename") == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "nomen.clearListAfterRename")
+        AppPreferences.clearListAfterSuccessfulRename
     }
 
     private func startRenameSession(indices: [Int], renamedEntireList: Bool) {
@@ -238,21 +234,15 @@ final class RenameViewModel: ObservableObject {
 
     /// Führt die Umbenennung für eine Zeile aus. Rückgabe **true**, wenn kein Fehler aufgetreten ist.
     private func applyRename(at index: Int, updated: inout [RenamePreviewRow]) -> Bool {
-        let fm = FileManager.default
         let source = updated[index].sourceURL
-        var targetName = updated[index].proposedName
-        let dir = source.deletingLastPathComponent()
-
-        var access = false
-        if source.startAccessingSecurityScopedResource() { access = true }
-        defer { if access { source.stopAccessingSecurityScopedResource() } }
-
         do {
-            let unique = uniquifyFilename(desiredName: targetName, directory: dir, ignoreIfSameAs: source)
-            targetName = unique
-            let finalURL = dir.appendingPathComponent(targetName)
+            let (finalURL, targetName) = try SecurityScopedResource.accessing(source) {
+                try FileRenameOperations.renameIfNeeded(
+                    source: source,
+                    desiredName: updated[index].proposedName
+                )
+            }
             if finalURL.path != source.path {
-                try fm.moveItem(at: source, to: finalURL)
                 updated[index].sourceURL = finalURL
                 if let j = lastInputURLs.firstIndex(where: { $0.path == source.path }) {
                     lastInputURLs[j] = finalURL
@@ -324,135 +314,31 @@ final class RenameViewModel: ObservableObject {
             progressValue = fileBase
             let docIndex = progressIdx + 1
 
-            var access = false
-            if url.startAccessingSecurityScopedResource() {
-                access = true
-            }
-            defer {
-                if access { url.stopAccessingSecurityScopedResource() }
-            }
-
             let originalName = url.lastPathComponent
             let ext = url.pathExtension
 
-            var status: String?
-
             do {
-                phase = .extracting
-                progressLabel = analysisBatchLabel(
-                    documentIndex: docIndex,
-                    documentCount: documentCount,
-                    phase: t.progressExtract
-                )
-
-                var embeddedPDFCount: Int?
-                var ocrCount: Int?
-                var usedVisionOCRForSample = false
-                var sample = ""
-
-                if ext.lowercased() == "pdf" {
-                    phase = .ocr
-                    progressLabel = analysisBatchLabel(
-                        documentIndex: docIndex,
-                        documentCount: documentCount,
-                        phase: t.progressOCR
-                    )
-                    progressValue = fileBase + fileSlice * 0.02
+                let granted = url.startAccessingSecurityScopedResource()
+                defer {
+                    if granted { url.stopAccessingSecurityScopedResource() }
                 }
-                let snap = try await DocumentAIProcessor.extractForRenaming(
+                let row = try await analyzeOneFile(
                     url: url,
-                    extLowercased: ext.lowercased()
-                )
-                embeddedPDFCount = snap.embeddedCharacterCount
-                ocrCount = snap.ocrCharacterCount > 0 ? snap.ocrCharacterCount : nil
-                usedVisionOCRForSample = snap.usedVisionOCRAsPrimary
-                sample = snap.combinedText
-
-                if ext.lowercased() == "pdf" {
-                    progressValue = fileBase + fileSlice * 0.46
-                } else {
-                    progressValue = fileBase + fileSlice * 0.35
-                }
-
-                phase = .understanding
-                progressLabel = analysisBatchLabel(
-                    documentIndex: docIndex,
-                    documentCount: documentCount,
-                    phase: t.progressNL(inferenceBackend: namingInferenceBackend)
-                )
-                progressValue = fileBase + fileSlice * 0.52
-
-                let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-                let mod = attrs[.modificationDate] as? Date ?? Date()
-
-                let stem = url.deletingPathExtension().lastPathComponent
-                let localeId = uiLanguage == .german ? "de_DE" : "en_US"
-
-                let pkg = await OnDeviceDocumentAnalyzer.analyzePackage(
-                    sampleText: sample,
-                    fileModificationDate: mod,
-                    fallbackFilenameStem: stem,
-                    localeIdentifier: localeId,
-                    outputLanguageMode: outputLanguageMode,
-                    inferenceBackend: namingInferenceBackend
-                )
-                let understanding = pkg.result
-                let hintSuffix = pkg.errorStep.map { t.modelFallbackUserMessage(detail: $0) }
-
-                let proposedBase = FilenameFormatting.formatFilename(
-                    schema: schemaSnapshot,
-                    title: understanding.title,
-                    date: understanding.documentDate ?? mod,
-                    originalExtension: ext
-                )
-
-                let directory = url.deletingLastPathComponent()
-                let unique = uniquifyFilename(
-                    desiredName: proposedBase,
-                    directory: directory,
-                    ignoreIfSameAs: url
-                )
-
-                var dateHint = understanding.usedContentDate ? t.dateFromContent : t.dateFromFile
-                if let hintSuffix {
-                    dateHint = "\(dateHint) — \(hintSuffix)"
-                }
-
-                let debugOn = UserDefaults.standard.bool(forKey: "nomen.showPipelineDebug")
-                let pipelineDebug: PipelineDebugSnapshot? = debugOn ? makePipelineDebug(
-                    ext: ext,
-                    sample: sample,
-                    embeddedPDFCount: embeddedPDFCount,
-                    ocrCount: ocrCount,
-                    usedVisionOCRForSample: usedVisionOCRForSample,
-                    pkg: pkg,
-                    understanding: understanding
-                ) : nil
-
-                builtRows[mergeIdx] = RenamePreviewRow(
-                    id: UUID(),
-                    sourceURL: url,
                     originalName: originalName,
-                    proposedName: unique,
-                    statusMessage: dateHint,
-                    usedFallbackDate: !understanding.usedContentDate,
-                    namingBasis: understanding,
-                    pipelineDebug: pipelineDebug,
-                    isAnalysisPlaceholder: false
+                    ext: ext,
+                    schemaSnapshot: schemaSnapshot,
+                    fileBase: fileBase,
+                    fileSlice: fileSlice,
+                    documentIndex: docIndex,
+                    documentCount: documentCount
                 )
+                builtRows[mergeIdx] = row
                 progressValue = fileBase + fileSlice
             } catch {
-                status = error.localizedDescription
-                builtRows[mergeIdx] = RenamePreviewRow(
-                    id: UUID(),
-                    sourceURL: url,
+                builtRows[mergeIdx] = DocumentFileAnalyzer.makeFailedRow(
+                    url: url,
                     originalName: originalName,
-                    proposedName: originalName,
-                    statusMessage: status,
-                    usedFallbackDate: true,
-                    namingBasis: nil,
-                    pipelineDebug: nil,
-                    isAnalysisPlaceholder: false
+                    message: error.localizedDescription
                 )
                 progressValue = fileBase + fileSlice
             }
@@ -523,84 +409,75 @@ final class RenameViewModel: ObservableObject {
         return "\(t.progressDocumentsBatch(current: documentIndex, total: documentCount)) — \(phase)"
     }
 
-    private func makePipelineDebug(
+    private func analyzeOneFile(
+        url: URL,
+        originalName: String,
         ext: String,
-        sample: String,
-        embeddedPDFCount: Int?,
-        ocrCount: Int?,
-        usedVisionOCRForSample: Bool,
-        pkg: DocumentAnalysisPackage,
-        understanding: DocumentUnderstandingResult
-    ) -> PipelineDebugSnapshot {
-        let excerpt = String(sample.prefix(14_000))
-        let rawCap = 8000
-        let chosenLabel: String
-        let summary: String
-        if ext.lowercased() == "pdf" {
-            if usedVisionOCRForSample {
-                let ec = embeddedPDFCount.map { "\($0) chars" } ?? "n/a"
-                let oc = ocrCount.map { "\($0) chars" } ?? "n/a"
-                summary = "PDF · embedded probe: \(ec) · Vision OCR (page 1): \(oc) · sample: \(sample.count) chars"
-                chosenLabel = "Vision OCR (page 1)"
-            } else {
-                let ec = embeddedPDFCount.map { "\($0) chars" } ?? "n/a"
-                summary = "PDF · embedded text: \(ec) (up to 40 pages) · sample: \(sample.count) chars"
-                chosenLabel = "Embedded PDF text"
-            }
-        } else {
-            summary = "Non-PDF · extracted text: \(sample.count) characters"
-            chosenLabel = "File contents"
-        }
-        return PipelineDebugSnapshot(
-            extractionSummary: summary,
-            embeddedPDFCharacterCount: embeddedPDFCount,
-            ocrCharacterCount: ocrCount,
-            chosenSourceLabel: chosenLabel,
-            textSampleForModel: excerpt,
-            textTotalCharacters: excerpt.count,
-            modelRawReply: pkg.modelRawReply.map { String($0.prefix(rawCap)) },
-            jsonSuggestedTitle: pkg.jsonSuggestedTitle,
-            jsonDocumentDateISO: pkg.jsonDocumentDateISO,
-            jsonDateFromDocument: pkg.jsonDateFromDocument,
-            modelOrParseError: pkg.errorStep,
-            finalTitleAfterSanitize: understanding.title,
-            usedContentDate: understanding.usedContentDate,
-            usedFilenameFallbackForTitle: pkg.usedFilenameFallbackForTitle
+        schemaSnapshot: DateNameSchema,
+        fileBase: Double,
+        fileSlice: Double,
+        documentIndex: Int,
+        documentCount: Int
+    ) async throws -> RenamePreviewRow {
+        phase = .extracting
+        progressLabel = analysisBatchLabel(
+            documentIndex: documentIndex,
+            documentCount: documentCount,
+            phase: t.progressExtract
         )
-    }
 
-    private func isSupported(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "pdf", "txt", "md", "markdown", "csv", "log", "rtf", "rtfd", "docx":
-            return true
-        default:
-            return false
+        if ext.lowercased() == SupportedDocumentFormat.pdf.rawValue {
+            phase = .ocr
+            progressLabel = analysisBatchLabel(
+                documentIndex: documentIndex,
+                documentCount: documentCount,
+                phase: t.progressOCR
+            )
+            progressValue = fileBase + fileSlice * 0.02
         }
-    }
+        let snap = try await DocumentAIProcessor.extractForRenaming(
+            url: url,
+            extLowercased: ext.lowercased()
+        )
 
-    private func uniquifyFilename(desiredName: String, directory: URL, ignoreIfSameAs source: URL) -> String {
-        let fm = FileManager.default
-        let target = directory.appendingPathComponent(desiredName)
-        if target.path == source.path {
-            return desiredName
-        }
-        if !fm.fileExists(atPath: target.path) {
-            return desiredName
+        if ext.lowercased() == SupportedDocumentFormat.pdf.rawValue {
+            progressValue = fileBase + fileSlice * 0.46
+        } else {
+            progressValue = fileBase + fileSlice * 0.35
         }
 
-        let ns = desiredName as NSString
-        let base = ns.deletingPathExtension
-        let ext = ns.pathExtension
+        phase = .understanding
+        progressLabel = analysisBatchLabel(
+            documentIndex: documentIndex,
+            documentCount: documentCount,
+            phase: t.progressNL(inferenceBackend: namingInferenceBackend)
+        )
+        progressValue = fileBase + fileSlice * 0.52
 
-        var i = 2
-        while true {
-            let candidate = ext.isEmpty ? "\(base) (\(i))" : "\(base) (\(i)).\(ext)"
-            let url = directory.appendingPathComponent(candidate)
-            if !fm.fileExists(atPath: url.path) {
-                return candidate
-            }
-            i += 1
-        }
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let mod = attrs[.modificationDate] as? Date ?? Date()
+        let stem = url.deletingPathExtension().lastPathComponent
+        let localeId = uiLanguage == .german ? "de_DE" : "en_US"
+
+        let pkg = await OnDeviceDocumentAnalyzer.analyzePackage(
+            sampleText: snap.combinedText,
+            fileModificationDate: mod,
+            fallbackFilenameStem: stem,
+            localeIdentifier: localeId,
+            outputLanguageMode: outputLanguageMode,
+            inferenceBackend: namingInferenceBackend
+        )
+
+        return DocumentFileAnalyzer.makeCompletedRow(
+            url: url,
+            originalName: originalName,
+            extension: ext,
+            schema: schemaSnapshot,
+            snap: snap,
+            fileModificationDate: mod,
+            package: pkg,
+            strings: t,
+            includePipelineDebug: AppPreferences.showPipelineDebug
+        )
     }
 }

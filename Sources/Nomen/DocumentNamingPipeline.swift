@@ -5,6 +5,45 @@ enum DocumentNamingPipeline {
     /// Obergrenze gegen Modell-„Roman“; darunter gilt der JSON-Titel als nutzbar (Slug).
     static let modelTitleWallOfTextWordLimit = 36
     static let modelTitleWallOfTextCharLimit = 420
+    /// Gemeinsames Textlimit für Foundation- und GGUF-Prompts (bisher an beiden Call-Sites 8000).
+    static let excerptCharacterLimit = 8000
+
+    private static let promptDateLock = NSLock()
+    private static let promptDateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        return df
+    }()
+
+    static func formattedPromptDate(_ date: Date) -> String {
+        promptDateLock.lock()
+        defer { promptDateLock.unlock() }
+        return promptDateFormatter.string(from: date)
+    }
+
+    static func prompts(
+        sampleText: String,
+        fileModificationDate: Date,
+        fallbackFilenameStem: String,
+        modelLocaleId: String,
+        outputLanguageMode: OutputLanguageMode,
+        uiLocaleIdentifier: String
+    ) -> (instructions: String, userPrompt: String, fallbackTitle: String) {
+        (
+            buildInstructions(
+                modelLocaleId: modelLocaleId,
+                outputLanguageMode: outputLanguageMode,
+                uiLocaleIdentifier: uiLocaleIdentifier
+            ),
+            buildUserPrompt(
+                sampleText: sampleText,
+                fileModificationDate: fileModificationDate,
+                fallbackFilenameStem: fallbackFilenameStem,
+                excerptCharacterLimit: excerptCharacterLimit
+            ),
+            FilenameSanitizer.archiveFallbackTitle(fromFilenameStem: fallbackFilenameStem)
+        )
+    }
 
     static func buildInstructions(
         modelLocaleId: String,
@@ -77,9 +116,7 @@ enum DocumentNamingPipeline {
         fallbackFilenameStem: String,
         excerptCharacterLimit: Int = 3000
     ) -> String {
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        let modString = df.string(from: fileModificationDate)
+        let modString = formattedPromptDate(fileModificationDate)
 
         let limit = max(500, excerptCharacterLimit)
         let excerpt = String(sampleText.prefix(limit))
@@ -163,19 +200,11 @@ enum DocumentNamingPipeline {
         error: String,
         fallbackTitle: String
     ) -> DocumentAnalysisPackage {
-        let fb = DocumentUnderstandingResult(
+        return DocumentAnalysisPackage.titledFallback(
             title: fallbackTitle,
-            documentDate: fileModificationDate,
-            usedContentDate: false
-        )
-        return DocumentAnalysisPackage(
-            result: fb,
-            modelRawReply: raw,
-            jsonSuggestedTitle: nil,
-            jsonDocumentDateISO: nil,
-            jsonDateFromDocument: nil,
+            fileModificationDate: fileModificationDate,
             errorStep: error,
-            usedFilenameFallbackForTitle: true
+            modelRawReply: raw
         )
     }
 

@@ -8,12 +8,12 @@ struct MainView: View {
     @State private var tableSelection: Set<RenamePreviewRow.ID> = []
     @State private var isDragTargeted = false
     @FocusState private var tableKeyboardFocused: Bool
-    @AppStorage("nomen.onboardingCompleted") private var onboardingCompleted = false
+    @AppStorage(AppPreferenceKey.onboardingCompleted) private var onboardingCompleted = false
     @State private var mainChromeOpacity: Double = 1
-    @AppStorage("nomen.appLanguage") private var languageRaw = AppLanguage.english.rawValue
-    @AppStorage("nomen.outputLanguage") private var outputLanguageRaw = OutputLanguageMode.followDocument.rawValue
-    @AppStorage("nomen.showPipelineDebug") private var showPipelineDebug = false
-    @AppStorage("nomen.namingInferenceBackend") private var inferenceRaw = NamingInferenceBackend.appleFoundation.rawValue
+    @AppStorage(AppPreferenceKey.appLanguage) private var languageRaw = AppLanguage.english.rawValue
+    @AppStorage(AppPreferenceKey.outputLanguage) private var outputLanguageRaw = OutputLanguageMode.followDocument.rawValue
+    @AppStorage(AppPreferenceKey.showPipelineDebug) private var showPipelineDebug = false
+    @AppStorage(AppPreferenceKey.namingInferenceBackend) private var inferenceRaw = NamingInferenceBackend.appleFoundation.rawValue
 
     private var lang: AppLanguage {
         AppLanguage(rawValue: languageRaw) ?? .english
@@ -444,16 +444,14 @@ struct MainView: View {
 
     /// Neue Installation: Onboarding anzeigen. App-Update von einer Version ohne Onboarding: einmalig als erledigt markieren.
     private func applyOnboardingUpgradeMigrationIfNeeded() {
-        let versionKey = "nomen.lastLaunchedShortVersion"
-        let onboardingKey = "nomen.onboardingCompleted"
-        let last = UserDefaults.standard.string(forKey: versionKey)
+        let last = AppPreferences.lastLaunchedShortVersion
         let current =
             (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
-        defer { UserDefaults.standard.set(current, forKey: versionKey) }
+        defer { AppPreferences.setLastLaunchedShortVersion(current) }
 
-        guard UserDefaults.standard.object(forKey: onboardingKey) == nil else { return }
+        guard AppPreferences.onboardingCompletedIsUnset else { return }
         if let last, last != current {
-            UserDefaults.standard.set(true, forKey: onboardingKey)
+            AppPreferences.markOnboardingCompleted()
         }
     }
 
@@ -463,11 +461,7 @@ struct MainView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.prompt = t.openPanelPrompt
-        var types: [UTType] = [.pdf, .plainText, .rtf, .text]
-        if let md = UTType(filenameExtension: "md") { types.append(md) }
-        if let docx = UTType(filenameExtension: "docx") { types.append(docx) }
-        if let markdown = UTType(filenameExtension: "markdown") { types.append(markdown) }
-        panel.allowedContentTypes = types
+        panel.allowedContentTypes = SupportedDocumentFormat.openPanelContentTypes
 
         panel.begin { response in
             guard response == .OK else { return }

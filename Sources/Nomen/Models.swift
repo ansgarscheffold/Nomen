@@ -80,3 +80,16 @@ enum RenameOutcomeKind: Equatable {
     case partialFailure
     case allFailed
 }
+
+/// Antwort-Struktur für die Umbenennung (Apple Foundation Models und GGUF).
+/// **Single source of truth:** Nur `archiveTitle` (plus `date`).
+struct RenameResult: Sendable {
+    let date: String?
+    /// Der komplette, menschlich formulierte Archiv-Titel (ohne Datum). Wird nur an `FilenameSanitizer.slugTitle` übergeben.
+    let archiveTitle: String?
+
+    /// Roh-Titel für Debug/Pipeline (nach Whitespace-Trim).
+    var generatedTitle: String {
+        archiveTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}

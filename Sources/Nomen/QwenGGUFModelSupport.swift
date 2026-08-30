@@ -3,8 +3,9 @@ import Foundation
 /// Qwen2.5-7B-Instruct (GGUF, Q4_K_M, zwei Shards) — Hugging Face `Qwen/Qwen2.5-7B-Instruct-GGUF`.
 /// llama.cpp lädt über das erste Shard; das zweite muss im selben Ordner liegen.
 enum QwenGGUFModelSupport {
-    private static let huggingFaceResolveBase =
-        "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main"
+    private static let huggingFaceResolveBaseURL = URL(
+        string: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main"
+    )!
 
     static let ggufShardFileNames = [
         "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
@@ -15,11 +16,13 @@ enum QwenGGUFModelSupport {
     static let approximateDownloadMegabytes = 4500
 
     static func downloadURL(forShardFileName fileName: String) -> URL {
-        URL(string: "\(huggingFaceResolveBase)/\(fileName)")!
+        huggingFaceResolveBaseURL.appendingPathComponent(fileName)
     }
 
     static var modelsDirectoryURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         return appSupport
             .appendingPathComponent("Nomen", isDirectory: true)
             .appendingPathComponent("Models", isDirectory: true)
