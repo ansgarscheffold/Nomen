@@ -22,10 +22,6 @@ enum ExtractionError: LocalizedError {
 
 enum DocumentTextExtractor {
     private static let maxBytes = 512_000
-    private static let docxTextRunRegex = try! NSRegularExpression(
-        pattern: #"<w:t[^>]*>(.*?)</w:t>"#,
-        options: [.dotMatchesLineSeparators]
-    )
 
     static func extractText(from url: URL) throws -> String {
         switch SupportedDocumentFormat(rawValue: url.pathExtension.lowercased()) {
@@ -113,31 +109,25 @@ enum DocumentTextExtractor {
             throw ExtractionError.couldNotOpen
         }
         var data = Data()
-        _ = try archive.extract(entry, consumer: { chunk in
-            data.append(chunk)
-        })
+        data.reserveCapacity(min(Int(maxBytes), 64_000))
+        enum ExtractCap: Error { case reached }
+        do {
+            _ = try archive.extract(entry, skipCRC32: true, consumer: { chunk in
+                if data.count >= maxBytes { throw ExtractCap.reached }
+                let room = maxBytes - data.count
+                if chunk.count > room {
+                    data.append(chunk.prefix(room))
+                    throw ExtractCap.reached
+                }
+                data.append(chunk)
+            })
+        } catch is ExtractCap {
+            // bewusst gekappt — analog zu cappedData
+        }
         guard let xml = String(data: data, encoding: .utf8) else {
             throw ExtractionError.encoding
         }
-        return trim(xmlDocxPlainText(from: xml))
-    }
-
-    private static func xmlDocxPlainText(from xml: String) -> String {
-        let ns = xml as NSString
-        let full = NSRange(location: 0, length: ns.length)
-        let matches = docxTextRunRegex.matches(in: xml, options: [], range: full)
-        var parts: [String] = []
-        parts.reserveCapacity(min(matches.count, 512))
-        var total = 0
-        for m in matches where m.numberOfRanges > 1 {
-            let r = m.range(at: 1)
-            guard let range = Range(r, in: xml) else { continue }
-            let piece = String(xml[range])
-            parts.append(piece)
-            total += piece.count + 1
-            if total >= 8_000 { break }
-        }
-        return parts.joined(separator: " ")
+        return trim(DocxXMLPlainText.extract(from: xml))
     }
 
     private static func cappedData(_ url: URL) throws -> Data {

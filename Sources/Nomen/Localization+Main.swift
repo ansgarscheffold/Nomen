@@ -30,6 +30,19 @@ extension L10n {
 
     var renameAll: String { s(en: "Rename all", de: "Alle umbenennen") }
 
+    var renameConfirmTitle: String {
+        s(en: "Rename files?", de: "Dateien umbenennen?")
+    }
+
+    var renameConfirmAction: String { s(en: "Rename", de: "Umbenennen") }
+
+    func renameConfirmMessage(count: Int) -> String {
+        s(
+            en: "\(count) file(s) will be renamed in place. This cannot be undone automatically. Keep backups if you need the old names.",
+            de: "\(count) Datei(en) werden direkt umbenannt. Es gibt kein automatisches Rückgängig. Bei Bedarf vorher eine Kopie behalten."
+        )
+    }
+
     var openPanelPrompt: String { s(en: "Open", de: "Öffnen") }
 
     var dropHeadline: String { s(en: "Drop PDFs and documents here", de: "PDFs und Dokumente hierher ziehen") }

@@ -105,12 +105,18 @@ struct NamingModelSettingsBlock: View {
         }
         do {
             try QwenGGUFModelSupport.ensureModelsDirectoryExists()
-            let shards = QwenGGUFModelSupport.ggufShardFileNames
+            QwenGGUFModelSupport.resetIntegrityCache()
+            let shards = QwenGGUFCatalog.shards
             let total = Double(shards.count)
-            for (index, fileName) in shards.enumerated() {
+            for (index, shard) in shards.enumerated() {
+                guard let remote = QwenGGUFCatalog.downloadURL(forShardFileName: shard.fileName) else {
+                    throw GgufModelDownloadError.disallowedHost
+                }
                 try await GgufModelDownload.download(
-                    from: QwenGGUFModelSupport.downloadURL(forShardFileName: fileName),
-                    to: QwenGGUFModelSupport.localURL(forShardFileName: fileName),
+                    from: remote,
+                    to: QwenGGUFModelSupport.localURL(forShardFileName: shard.fileName),
+                    expectedByteCount: shard.byteCount,
+                    expectedSHA256Hex: shard.sha256Hex,
                     onProgress: { fraction in
                         let base = Double(index) / total
                         if let fraction {

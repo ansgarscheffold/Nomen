@@ -7,8 +7,13 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
-	<!-- GGUF-Download (Hugging Face) wenn „H2O Danube3“ in den Einstellungen gewählt ist -->
+	<!-- GGUF-Download (Hugging Face), wenn der lokale Qwen-Pfad gewählt ist -->
 	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- llama.cpp / Metal: ausführbare Seiten für JIT-Kernel. Kein disable-library-validation. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
 </dict>
 </plist>

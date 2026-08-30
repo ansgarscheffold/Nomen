@@ -84,8 +84,8 @@ enum DocumentFileAnalyzer {
         package: DocumentAnalysisPackage,
         understanding: DocumentUnderstandingResult
     ) -> PipelineDebugSnapshot {
-        let excerpt = String(sample.prefix(14_000))
-        let rawCap = 8000
+        let excerpt = String(sample.prefix(600))
+        let rawCap = 800
         let chosenLabel: String
         let summary: String
         if ext.lowercased() == SupportedDocumentFormat.pdf.rawValue {

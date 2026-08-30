@@ -9,6 +9,9 @@ public enum DocumentNamingPipeline {
     public static let excerptCharacterLimit = 8000
 
     private static let promptDateLock = NSLock()
+    private static let specialTokenRegex = try! NSRegularExpression(
+        pattern: #"<\|[^|]{1,64}\|>"#
+    )
     private static let promptDateFormatter: DateFormatter = {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
@@ -137,7 +140,8 @@ public enum DocumentNamingPipeline {
         let modString = formattedPromptDate(fileModificationDate)
 
         let limit = max(500, excerptCharacterLimit)
-        let excerpt = String(sampleText.prefix(limit))
+        let excerpt = sanitizeUntrustedPromptText(String(sampleText.prefix(limit)))
+        let stem = sanitizeUntrustedPromptText(fallbackFilenameStem)
         return """
         ZIEL: Erstelle einen sachlichen Titel aus dem Dokumenttext. Keine Namen von Privatpersonen. Keine Platzhalter.
         SCHEMA: JSON {"date":"YYYY-MM-DD", "archiveTitle":"Typ Thema Jahr Firma"}
@@ -147,11 +151,27 @@ public enum DocumentNamingPipeline {
         - Text: Bescheid vom Finanzamt München 2024 über Steuern... -> {"date":"2024-02-15", "archiveTitle":"Steuerbescheid 2024 Finanzamt München"}
 
         DOKUMENTTEXT:
+        -----BEGIN DOCUMENT-----
         \(excerpt)
+        -----END DOCUMENT-----
 
         HILFS-DATUM: \(modString)
-        DATEINAME: \(fallbackFilenameStem)
+        DATEINAME: \(stem)
         """
+    }
+
+    /// Entfernt Chat-Special-Tokens und NUL, damit Dokumenttext die Qwen-Vorlage nicht sprengen kann.
+    public static func sanitizeUntrustedPromptText(_ raw: String) -> String {
+        var s = raw
+        s.removeAll { $0 == "\0" }
+        let ns = s as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        return specialTokenRegex.stringByReplacingMatches(
+            in: s,
+            options: [],
+            range: full,
+            withTemplate: " "
+        )
     }
 
     /// Rohtext des Modells → gleiche Auswertung wie bei Foundation Models.

@@ -4,21 +4,13 @@ import NomenCore
 /// Qwen2.5-7B-Instruct (GGUF, Q4_K_M, zwei Shards) — Hugging Face `Qwen/Qwen2.5-7B-Instruct-GGUF`.
 /// llama.cpp lädt über das erste Shard; das zweite muss im selben Ordner liegen.
 enum QwenGGUFModelSupport {
-    private static let huggingFaceResolveBaseURL = URL(
-        string: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main"
-    )!
+    static let ggufShardFileNames = QwenGGUFCatalog.ggufShardFileNames
 
-    static let ggufShardFileNames = [
-        "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-        "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
-    ]
+    /// Gesamtgröße beider Shards (ungefähr, MB).
+    static let approximateDownloadMegabytes = QwenGGUFCatalog.approximateDownloadMegabytes
 
-    /// Gesamtgröße beider Shards (ungefähr).
-    static let approximateDownloadMegabytes = 4500
-
-    static func downloadURL(forShardFileName fileName: String) -> URL {
-        huggingFaceResolveBaseURL.appendingPathComponent(fileName)
-    }
+    private static let verifyLock = NSLock()
+    nonisolated(unsafe) private static var integrityVerifiedThisProcess = false
 
     static var modelsDirectoryURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -43,9 +35,45 @@ enum QwenGGUFModelSupport {
     }
 
     static var isDownloaded: Bool {
-        ggufShardFileNames.allSatisfy {
-            FileManager.default.fileExists(atPath: localURL(forShardFileName: $0).path)
+        QwenGGUFCatalog.shards.allSatisfy { shard in
+            let url = localURL(forShardFileName: shard.fileName)
+            guard FileManager.default.fileExists(atPath: url.path) else { return false }
+            return (try? FileIntegrity.fileSize(at: url)) == shard.byteCount
         }
+    }
+
+    static func resetIntegrityCache() {
+        verifyLock.lock()
+        integrityVerifiedThisProcess = false
+        verifyLock.unlock()
+    }
+
+    /// SHA-256 beider Shards. Nach Erfolg im Prozess gecacht (4+ GB).
+    static func verifyAllShardsOnDisk() throws {
+        verifyLock.lock()
+        let alreadyVerified = integrityVerifiedThisProcess
+        verifyLock.unlock()
+        if alreadyVerified { return }
+
+        for shard in QwenGGUFCatalog.shards {
+            let url = localURL(forShardFileName: shard.fileName)
+            do {
+                try FileIntegrity.verify(
+                    url: url,
+                    expectedSHA256Hex: shard.sha256Hex,
+                    expectedByteCount: shard.byteCount
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+                verifyLock.lock()
+                integrityVerifiedThisProcess = false
+                verifyLock.unlock()
+                throw error
+            }
+        }
+        verifyLock.lock()
+        integrityVerifiedThisProcess = true
+        verifyLock.unlock()
     }
 
     /// Alle Shard-Pfade (Finder-Auswahl), wenn `isDownloaded`.

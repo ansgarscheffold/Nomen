@@ -188,7 +188,7 @@ enum DocumentAINaming {
             break
         case .unavailable(let reason):
             let desc = String(describing: reason)
-            log.error("SystemLanguageModel unavailable: \(desc, privacy: .public)")
+            log.error("SystemLanguageModel unavailable: \(desc, privacy: .private)")
             return DocumentAnalysisPackage.filenameFallback(
                 fallbackFilenameStem: fallbackFilenameStem,
                 fileModificationDate: fileModificationDate,
@@ -231,7 +231,7 @@ enum DocumentAINaming {
                 fallbackTitle: fallbackTitle
             )
         } catch {
-            log.error("Model call failed: \(String(describing: error), privacy: .public)")
+            log.error("Model call failed: \(String(describing: error), privacy: .private)")
             return DocumentAnalysisPackage.titledFallback(
                 title: fallbackTitle,
                 fileModificationDate: fileModificationDate,

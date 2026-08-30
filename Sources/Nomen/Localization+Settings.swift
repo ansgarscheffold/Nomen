@@ -111,8 +111,8 @@ extension L10n {
     }
 
     var debugPipelineHint: String {
-        s(en: "Shows text extraction and raw model output below the file list.",
-          de: "Zeigt Textextraktion und Modell-Rohantwort unterhalb der Dateiliste.")
+        s(en: "Shows a short excerpt of extraction and model output below the file list. Do not enable while screen-sharing sensitive documents.",
+          de: "Zeigt einen kurzen Ausschnitt von Extraktion und Modellausgabe unter der Dateiliste. Nicht aktivieren, wenn sensible Dokumente geteilt werden.")
     }
 
     var debugInspectorHint: String {

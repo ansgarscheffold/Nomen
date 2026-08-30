@@ -4,10 +4,11 @@
 # App-Icon: Resources/AppIcon.iconset → iconutil → AppIcon.icns (im Repo versioniert).
 #
 # Optional (Umgebungsvariablen):
-#   NOMEN_BUNDLE_ID   — CFBundleIdentifier (Standard: app.nomen)
-#   NOMEN_VERSION     — CFBundleShortVersionString (Standard: 1.0)
-#   NOMEN_BUILD       — CFBundleVersion (Standard: 1)
-#   NOMEN_OUT         — Ausgabeordner ohne .app (Standard: <Repo>/dist)
+#   NOMEN_BUNDLE_ID      — CFBundleIdentifier (Standard: app.nomen)
+#   NOMEN_VERSION        — CFBundleShortVersionString (Standard: 1.0)
+#   NOMEN_BUILD          — CFBundleVersion (Standard: 1)
+#   NOMEN_OUT            — Ausgabeordner ohne .app (Standard: <Repo>/dist)
+#   NOMEN_SIGN_IDENTITY  — codesign-Identität (Standard: "-" = Ad-hoc; Release: "Developer ID Application: …")
 #
 # Alle Argumente werden an `swift build` durchgereicht, z. B.:
 #   ./scripts/build-app.sh --arch arm64
@@ -53,11 +54,6 @@ if [[ -d "$LLAMA_FW_SRC" ]]; then
 	EXEC_DEST="$APP_PATH/Contents/MacOS/$APP_NAME"
 	if ! otool -l "$EXEC_DEST" | grep -q "@executable_path/../Frameworks"; then
 		install_name_tool -add_rpath @executable_path/../Frameworks "$EXEC_DEST"
-	fi
-	# Nach install_name_tool ggf. Signatur erneuern (lokal / Ad-hoc).
-	if command -v codesign >/dev/null 2>&1; then
-		codesign --force --deep -s - "$APP_PATH/Contents/Frameworks/llama.framework" 2>/dev/null || true
-		codesign --force -s - "$EXEC_DEST" 2>/dev/null || true
 	fi
 else
 	echo "Hinweis: Kein llama.framework unter $BIN_DIR — LlamaSwift-Binary?" >&2
@@ -113,4 +109,29 @@ EOF
 plutil -lint "$APP_PATH/Contents/Info.plist" >/dev/null
 touch "$APP_PATH"
 
+ENTITLEMENTS="$ROOT/Nomen.entitlements"
+SIGN_IDENTITY="${NOMEN_SIGN_IDENTITY:--}"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+	echo "Entitlements fehlen: $ENTITLEMENTS" >&2
+	exit 1
+fi
+
+if command -v codesign >/dev/null 2>&1; then
+	echo "→ codesign (Hardened Runtime, Sandbox-Entitlements) …"
+	TIMESTAMP_ARGS=(--timestamp=none)
+	if [[ "$SIGN_IDENTITY" != "-" ]]; then
+		TIMESTAMP_ARGS=(--timestamp)
+	fi
+	if [[ -d "$APP_PATH/Contents/Frameworks/llama.framework" ]]; then
+		codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" -s "$SIGN_IDENTITY" \
+			"$APP_PATH/Contents/Frameworks/llama.framework"
+	fi
+	codesign --force --options runtime "${TIMESTAMP_ARGS[@]}" \
+		--entitlements "$ENTITLEMENTS" -s "$SIGN_IDENTITY" "$APP_PATH"
+	codesign --verify --verbose=2 "$APP_PATH"
+else
+	echo "Hinweis: codesign nicht gefunden — Bundle ist unsigniert." >&2
+fi
+
 echo "Fertig. Starten mit: open \"$APP_PATH\""
+echo "Signatur/Entitlements prüfen: codesign -d --entitlements :- \"$APP_PATH\""

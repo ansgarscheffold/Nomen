@@ -31,6 +31,7 @@ public enum FilenameFormatting {
         if cleanedTitle.isEmpty {
             cleanedTitle = FilenameSanitizer.archiveFallbackLiteral
         }
+        cleanedTitle = FilenameSanitizer.truncateToUTF8ByteLimit(cleanedTitle, maxBytes: 180)
 
         let base: String
         switch schema {
@@ -41,7 +42,7 @@ public enum FilenameFormatting {
         case .titleOnly:
             base = cleanedTitle
         }
-        let ext = originalExtension.lowercased()
+        let ext = FilenameSanitizer.sanitizedPathExtension(originalExtension)
         if ext.isEmpty {
             return base
         }
@@ -188,5 +189,21 @@ public enum FilenameSanitizer {
             }
         }
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Nur bekannte Dokumentendungen; Pfadanteile werden verworfen.
+    public static func sanitizedPathExtension(_ raw: String) -> String {
+        let base = (raw as NSString).lastPathComponent.lowercased()
+        guard SupportedDocumentFormat.isSupported(fileExtension: base) else { return "" }
+        return base
+    }
+
+    public static func truncateToUTF8ByteLimit(_ s: String, maxBytes: Int) -> String {
+        guard maxBytes > 0, s.utf8.count > maxBytes else { return s }
+        var out = s
+        while out.utf8.count > maxBytes, !out.isEmpty {
+            out.removeLast()
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

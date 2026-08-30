@@ -8,6 +8,7 @@ struct MainView: View {
     @StateObject private var quickLook = QuickLookCoordinator()
     @State private var tableSelection: Set<RenamePreviewRow.ID> = []
     @State private var isDragTargeted = false
+    @State private var pendingRenameIDs: Set<UUID>?
     @FocusState private var tableKeyboardFocused: Bool
     @AppStorage(AppPreferenceKey.onboardingCompleted) private var onboardingCompleted = false
     @State private var mainChromeOpacity: Double = 1
@@ -100,6 +101,26 @@ struct MainView: View {
                 mainChromeOpacity = 1
             }
         }
+        .confirmationDialog(
+            t.renameConfirmTitle,
+            isPresented: Binding(
+                get: { pendingRenameIDs != nil },
+                set: { if !$0 { pendingRenameIDs = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(t.renameConfirmAction, role: .destructive) {
+                if let ids = pendingRenameIDs {
+                    model.renameRows(ids: ids)
+                }
+                pendingRenameIDs = nil
+            }
+            Button(t.dialogCancel, role: .cancel) {
+                pendingRenameIDs = nil
+            }
+        } message: {
+            Text(t.renameConfirmMessage(count: pendingRenameIDs?.count ?? 0))
+        }
     }
 
     private var namingBar: some View {
@@ -159,7 +180,9 @@ struct MainView: View {
             }
             .disabled(model.rows.isEmpty || model.isBusy)
 
-            Button(action: { model.renameAll() }) {
+            Button(action: {
+                requestRename(ids: Set(model.rows.filter { !$0.isAnalysisPlaceholder }.map(\.id)))
+            }) {
                 Label(t.renameAll, systemImage: "textformat")
             }
             .buttonStyle(GentleProminentButtonStyle())
@@ -211,7 +234,7 @@ struct MainView: View {
             guard !model.isRenaming else { return }
             presentOpenPanel()
         }
-        .onDrop(of: [.fileURL, .url], isTargeted: $isDragTargeted) { providers in
+        .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
             guard !model.isRenaming else { return false }
             Task { @MainActor in
                 let urls = await DroppedFileURLCollector.collect(from: providers)
@@ -234,7 +257,7 @@ struct MainView: View {
             isRenaming: model.isRenaming,
             tableSelection: $tableSelection,
             tableKeyboardFocused: $tableKeyboardFocused,
-            onRename: { model.renameRows(ids: $0) },
+            onRename: { requestRename(ids: $0) },
             onShowInFinder: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
             onRemove: { model.removeRows(ids: $0) },
             onClear: { model.clear() },
@@ -308,6 +331,11 @@ struct MainView: View {
             headers: t.pipelineDebugHeaders,
             t: t
         )
+    }
+
+    private func requestRename(ids: Set<UUID>) {
+        guard !ids.isEmpty, !model.isBusy, !model.isRenaming else { return }
+        pendingRenameIDs = ids
     }
 
     /// Neue Installation: Onboarding anzeigen. App-Update von einer Version ohne Onboarding: einmalig als erledigt markieren.

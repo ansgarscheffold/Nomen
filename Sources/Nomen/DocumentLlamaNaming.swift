@@ -42,6 +42,9 @@ enum DocumentLlamaNaming {
         let path = QwenGGUFModelSupport.localFileURL.path
 
         do {
+            try await Task.detached(priority: .userInitiated) {
+                try QwenGGUFModelSupport.verifyAllShardsOnDisk()
+            }.value
             try await LlamaCppRunner.shared.ensureLoaded(modelPath: path)
             let generated = try await LlamaCppRunner.shared.generateContinuation(
                 afterFullPrompt: fullPrompt,
@@ -57,7 +60,7 @@ enum DocumentLlamaNaming {
                 fallbackTitle: fallbackTitle
             )
         } catch {
-            log.error("Llama inference failed: \(String(describing: error), privacy: .public)")
+            log.error("Llama inference failed: \(String(describing: error), privacy: .private)")
             return DocumentAnalysisPackage.titledFallback(
                 title: fallbackTitle,
                 fileModificationDate: fileModificationDate,
