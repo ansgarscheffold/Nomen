@@ -30,6 +30,7 @@ final class RenameViewModel: ObservableObject {
     var namingInferenceBackend: NamingInferenceBackend = .appleFoundation
 
     private var lastInputURLs: [URL] = []
+    private let scopedAccess = SecurityScopedURLKeeper()
 
     /// Bricht alte Analysen ab, wenn ein neuer Batch startet (ohne Teilergebnisse zu vermischen).
     private var analysisRun: Int = 0
@@ -108,6 +109,7 @@ final class RenameViewModel: ObservableObject {
             merged.append(u)
         }
         lastInputURLs = merged
+        scopedAccess.retain(filtered)
         schemaRefreshTask?.cancel()
         schemaRefreshTask = nil
         analysisRun += 1
@@ -134,6 +136,7 @@ final class RenameViewModel: ObservableObject {
         rows = []
         reindexRows()
         lastInputURLs = []
+        scopedAccess.releaseAll()
         phase = .idle
         lastProgressPublish = nil
         progress.label = ""
@@ -199,9 +202,11 @@ final class RenameViewModel: ObservableObject {
 
     func removeRows(ids: Set<UUID>) {
         guard !isRenaming else { return }
+        let removedPaths = rows.filter { ids.contains($0.id) }.map(\.sourceURL.path)
         rows.removeAll { ids.contains($0.id) }
         reindexRows()
         lastInputURLs = rows.map(\.sourceURL)
+        scopedAccess.release(paths: removedPaths)
         if rows.isEmpty {
             phase = .idle
             progress.label = ""
@@ -251,6 +256,12 @@ final class RenameViewModel: ObservableObject {
                 case .rows(let updated):
                     self.replaceRows(updated)
                 case .row(at: let index, let row):
+                    if self.rows.indices.contains(index) {
+                        let previous = self.rows[index].sourceURL
+                        if previous.standardizedFileURL != row.sourceURL.standardizedFileURL {
+                            self.scopedAccess.noteRenamed(from: previous, to: row.sourceURL)
+                        }
+                    }
                     self.updateRow(at: index, row)
                 }
             }

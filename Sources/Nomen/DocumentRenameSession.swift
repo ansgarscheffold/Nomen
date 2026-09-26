@@ -132,15 +132,13 @@ enum DocumentRenameSession {
     }
 
     nonisolated private static func renameOnBackground(source: URL, desiredName: String) -> IOResult {
-        let granted = source.startAccessingSecurityScopedResource()
+        // Security-Scoped-Zugriff hält `SecurityScopedURLKeeper` für die Sitzung.
+        // Hier kein start/stop: nach didMoveTo würde stopAccessing den transferierten Scope killen.
         do {
             let (finalURL, targetName) = try FileRenameOperations.renameIfNeeded(
                 source: source,
                 desiredName: desiredName
             )
-            if granted {
-                finalURL.stopAccessingSecurityScopedResource()
-            }
             return IOResult(
                 success: true,
                 finalURL: finalURL,
@@ -148,9 +146,6 @@ enum DocumentRenameSession {
                 errorDescription: nil
             )
         } catch {
-            if granted {
-                source.stopAccessingSecurityScopedResource()
-            }
             return IOResult(
                 success: false,
                 finalURL: source,

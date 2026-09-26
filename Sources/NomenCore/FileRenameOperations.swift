@@ -57,9 +57,10 @@ public enum FileRenameOperations {
 
     /// Benennt `source` kollisionsfrei um (gleicher Ordner). Unverändert, wenn der Name schon passt.
     ///
-    /// Nutzt `URLResourceValues.name` statt `moveItem`: In der App-Sandbox reicht der
-    /// Security Scope der Datei oft nicht für Schreibzugriff auf den Elternordner, den
-    /// `moveItem` braucht — das führt zu „Datei konnte nicht bewegt werden“.
+    /// Nutzt `URLResourceValues.name` statt `moveItem`, und koordiniert nur die Quelldatei:
+    /// In der App-Sandbox reicht der Security Scope der Datei oft nicht für Schreibzugriff auf
+    /// den Elternordner (den `moveItem` und dual-coordinate aufs Ziel brauchen) — das führt zu
+    /// „Du hast nicht die Zugriffsrechte, um die Datei … zu sichern“.
     public static func renameIfNeeded(
         source: URL,
         desiredName: String,
@@ -121,10 +122,14 @@ public enum FileRenameOperations {
     private static func renameInPlace(source: URL, newFileName: String) throws -> (finalURL: URL, finalName: String) {
         let name = try confinedFileName(newFileName)
         let destination = source.deletingLastPathComponent().appendingPathComponent(name, isDirectory: false)
-        // Nicht moveItem: das verlangt Schreibrechte auf den Elternordner. In der Sandbox
-        // hat die App typischerweise nur Security Scope auf die Datei selbst.
-        // setResourceValues(name:) benennt in-place um, aktualisiert die URL aber nicht —
-        // daher Ziel-URL selbst bauen. NSFileCoordinator überträgt den Sandbox-Zugriff.
+        // Nicht moveItem und nicht dual-coordinate(destination): beides verlangt Schreibrechte
+        // auf den Elternordner. Open Panel / Drag-Drop liefern in der Sandbox nur
+        // Security Scope auf die Datei selbst → „keine Zugriffsrechte … zu sichern“.
+        //
+        // setResourceValues(name:) benennt die bereits freigegebene Datei in-place um.
+        // Nur Quell-URL koordinieren; danach didMoveTo, damit der Sandbox-Zugriff am neuen Namen bleibt.
+        // willMoveTo weglassen: ohne Related-Item-Document-Types fordert das eine Parent-/Related-
+        // Extension an und löst denselben Permission-Fehler aus.
         var coordinationError: NSError?
         var renameError: Error?
         var resultURL: URL?
@@ -133,19 +138,16 @@ public enum FileRenameOperations {
         coordinator.coordinate(
             writingItemAt: source,
             options: .forMoving,
-            writingItemAt: destination,
-            options: [],
             error: &coordinationError
-        ) { newSource, newDestination in
+        ) { coordinatedSource in
             do {
-                coordinator.item(at: newSource, willMoveTo: newDestination)
-                var working = newSource
+                var working = coordinatedSource
                 var values = URLResourceValues()
                 values.name = name
                 try working.setResourceValues(values)
-                // URL.path bleibt oft unverändert — physischer Name steht auf newDestination.
-                coordinator.item(at: newSource, didMoveTo: newDestination)
-                resultURL = newDestination
+                // URL.path bleibt oft unverändert — physischer Name steht auf destination.
+                coordinator.item(at: coordinatedSource, didMoveTo: destination)
+                resultURL = destination
             } catch {
                 renameError = error
             }
