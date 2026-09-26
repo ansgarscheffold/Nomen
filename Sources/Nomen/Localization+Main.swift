@@ -51,8 +51,8 @@ extension L10n {
 
     func folderAccessMessage(folderName: String) -> String {
         s(
-            en: "macOS only allows renaming after you grant write access to the folder “\(folderName)”. Select that folder and click Allow Access.",
-            de: "macOS erlaubt das Umbenennen erst, wenn du Schreibzugriff auf den Ordner „\(folderName)“ erlaubst. Wähle genau diesen Ordner und klicke auf Zugriff erlauben."
+            en: "To rename files later, Nomen needs write access to the folder “\(folderName)”. Select that folder and click Allow Access (once is enough).",
+            de: "Damit Nomen die Dateien später umbenennen kann, braucht es Schreibzugriff auf den Ordner „\(folderName)“. Wähle genau diesen Ordner und klicke auf Zugriff erlauben (einmal reicht)."
         )
     }
 
@@ -61,6 +61,13 @@ extension L10n {
     }
 
     var folderAccessDenied: String {
+        s(
+            en: "Folder access was not granted. You can still preview names; renaming will ask again.",
+            de: "Kein Ordnerzugriff erteilt. Vorschau geht trotzdem — beim Umbenennen wird erneut nachgefragt."
+        )
+    }
+
+    var folderAccessDeniedAtRename: String {
         s(
             en: "Renaming cancelled — folder access was not granted. Without it, macOS blocks renaming in the App Sandbox.",
             de: "Umbenennen abgebrochen — kein Ordnerzugriff. Ohne ihn blockiert macOS das Umbenennen in der App-Sandbox."

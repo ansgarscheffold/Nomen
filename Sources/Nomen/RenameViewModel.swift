@@ -128,8 +128,21 @@ final class RenameViewModel: ObservableObject {
         analysisRun += 1
         let run = analysisRun
         analysisTask?.cancel()
+        // Ordnerzugriff sofort beim Import — Rename später ohne Extra-Dialog.
         analysisTask = Task { [weak self] in
-            await self?.analyze(urls: merged, run: run)
+            guard let self else { return }
+            let accessOK = await FolderAccessGrant.ensureAccess(
+                toParentDirectoriesOf: filtered,
+                keeper: self.scopedAccess,
+                title: self.t.folderAccessTitle,
+                messageForFolder: { self.t.folderAccessMessage(folderName: $0) },
+                prompt: self.t.folderAccessPrompt
+            )
+            if Task.isCancelled || run != self.analysisRun { return }
+            if !accessOK {
+                self.errorMessage = self.t.folderAccessDenied
+            }
+            await self.analyze(urls: merged, run: run)
         }
     }
 
@@ -265,7 +278,7 @@ final class RenameViewModel: ObservableObject {
             prompt: t.folderAccessPrompt
         )
         guard accessOK else {
-            errorMessage = t.folderAccessDenied
+            errorMessage = t.folderAccessDeniedAtRename
             return
         }
 
