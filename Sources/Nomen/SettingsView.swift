@@ -13,69 +13,38 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            // ── App language ─────────────────────────────────────────────────
             Section {
-                Picker(selection: $languageRaw, label: EmptyView()) {
-                    ForEach(AppLanguage.allCases) { lang in
-                        Text(lang.displayName).tag(lang.rawValue)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
+                PreferenceControls.AppLanguagePicker(languageRaw: $languageRaw)
             } header: {
                 Label(t.settingsSectionAppLanguage, systemImage: "globe")
             }
 
-            // ── Title language ────────────────────────────────────────────────
             Section {
-                Picker(selection: $outputLanguageRaw, label: EmptyView()) {
-                    ForEach(OutputLanguageMode.allCases) { mode in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(t.outputLanguageModeLabel(mode))
-                            Text(t.outputLanguageHint(mode))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .tag(mode.rawValue)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
+                PreferenceControls.OutputLanguagePicker(outputLanguageRaw: $outputLanguageRaw, t: t)
             } header: {
                 Label(t.settingsSectionTitleLanguage, systemImage: "character.bubble")
             }
 
-            // ── Benennungs-Modell ─────────────────────────────────────────────
             Section {
                 NamingModelSettingsBlock(inferenceRaw: $inferenceRaw, t: t)
             } header: {
                 Label(t.settingsSectionNamingModel, systemImage: "cpu")
             }
 
-            // ── Nach Umbenennen ───────────────────────────────────────────────
             Section {
-                Toggle(isOn: $clearListAfterRename) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(t.settingsClearListAfterRename)
-                        Text(t.settingsClearListAfterRenameHint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                PreferenceControls.ClearListAfterRenameToggle(
+                    clearListAfterRename: $clearListAfterRename,
+                    t: t
+                )
             } header: {
                 Label(t.settingsSectionWorkflow, systemImage: "checklist")
             }
 
-            // ── Developer ─────────────────────────────────────────────────────
             Section {
-                Toggle(isOn: $showPipelineDebug) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(t.debugPipelineToggle)
-                        Text(t.debugPipelineHint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                PreferenceControls.PipelineDebugToggle(
+                    showPipelineDebug: $showPipelineDebug,
+                    t: t
+                )
             } header: {
                 Label(t.settingsSectionDeveloper, systemImage: "ant")
             }

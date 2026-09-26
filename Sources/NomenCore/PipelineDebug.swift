@@ -1,7 +1,7 @@
 import Foundation
 
 /// Step-by-step trace for one file (optional; filled when debug is enabled in Settings).
-public struct PipelineDebugSnapshot: Hashable {
+public struct PipelineDebugSnapshot: Hashable, Sendable {
     /// Human-readable: source lengths and which text was chosen for the model.
     public var extractionSummary: String
     public var embeddedPDFCharacterCount: Int?

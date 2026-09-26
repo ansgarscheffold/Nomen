@@ -160,30 +160,12 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Label(t.settingsSectionAppLanguage, systemImage: "globe")
                     .font(.subheadline.weight(.semibold))
-                Picker(selection: $languageRaw, label: EmptyView()) {
-                    ForEach(AppLanguage.allCases) { lang in
-                        Text(lang.displayName).tag(lang.rawValue)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
+                PreferenceControls.AppLanguagePicker(languageRaw: $languageRaw)
 
                 Label(t.settingsSectionTitleLanguage, systemImage: "character.bubble")
                     .font(.subheadline.weight(.semibold))
                     .padding(.top, 4)
-                Picker(selection: $outputLanguageRaw, label: EmptyView()) {
-                    ForEach(OutputLanguageMode.allCases) { mode in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(t.outputLanguageModeLabel(mode))
-                            Text(t.outputLanguageHint(mode))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .tag(mode.rawValue)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
+                PreferenceControls.OutputLanguagePicker(outputLanguageRaw: $outputLanguageRaw, t: t)
             }
         }
     }
@@ -211,24 +193,16 @@ struct OnboardingView: View {
                 subtitle: t.onboardingStepMoreSubtitle
             )
 
-            Toggle(isOn: $clearListAfterRename) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(t.settingsClearListAfterRename)
-                    Text(t.settingsClearListAfterRenameHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PreferenceControls.ClearListAfterRenameToggle(
+                clearListAfterRename: $clearListAfterRename,
+                t: t
+            )
             .toggleStyle(.switch)
 
-            Toggle(isOn: $showPipelineDebug) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(t.debugPipelineToggle)
-                    Text(t.debugPipelineHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            PreferenceControls.PipelineDebugToggle(
+                showPipelineDebug: $showPipelineDebug,
+                t: t
+            )
             .toggleStyle(.switch)
             .padding(.top, 4)
         }

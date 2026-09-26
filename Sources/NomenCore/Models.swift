@@ -38,7 +38,7 @@ public enum NamingInferenceBackend: String, CaseIterable, Identifiable, Sendable
     }
 }
 
-public enum DateNameSchema: String, CaseIterable, Identifiable {
+public enum DateNameSchema: String, CaseIterable, Identifiable, Sendable {
     case yearMonthTitle = "yyyyMM_title"
     case compactDateTitle = "yyMMdd_title"
     case titleOnly = "title_only"
@@ -70,7 +70,7 @@ public struct DocumentUnderstandingResult: Sendable, Hashable {
     }
 }
 
-public struct RenamePreviewRow: Identifiable, Hashable {
+public struct RenamePreviewRow: Identifiable, Hashable, Sendable {
     public let id: UUID
     public var sourceURL: URL
     /// Dateiname vor der letzten Umbenennung in dieser Sitzung; nach erfolgreichem Rename wird er dem neuen Namen angeglichen, wenn die Liste stehen bleibt.
