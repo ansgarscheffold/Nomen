@@ -7,6 +7,9 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- Persistenter Ordnerzugriff für Rename nach App-Neustart -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
 	<!-- GGUF-Download (Hugging Face), wenn der lokale Qwen-Pfad gewählt ist -->
 	<key>com.apple.security.network.client</key>
 	<true/>

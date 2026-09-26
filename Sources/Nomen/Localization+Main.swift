@@ -45,9 +45,36 @@ extension L10n {
 
     var openPanelPrompt: String { s(en: "Open", de: "Öffnen") }
 
+    var folderAccessTitle: String {
+        s(en: "Folder access required", de: "Ordnerzugriff nötig")
+    }
+
+    func folderAccessMessage(folderName: String) -> String {
+        s(
+            en: "macOS only allows renaming after you grant write access to the folder “\(folderName)”. Select that folder and click Allow Access.",
+            de: "macOS erlaubt das Umbenennen erst, wenn du Schreibzugriff auf den Ordner „\(folderName)“ erlaubst. Wähle genau diesen Ordner und klicke auf Zugriff erlauben."
+        )
+    }
+
+    var folderAccessPrompt: String {
+        s(en: "Allow Access", de: "Zugriff erlauben")
+    }
+
+    var folderAccessDenied: String {
+        s(
+            en: "Renaming cancelled — folder access was not granted. Without it, macOS blocks renaming in the App Sandbox.",
+            de: "Umbenennen abgebrochen — kein Ordnerzugriff. Ohne ihn blockiert macOS das Umbenennen in der App-Sandbox."
+        )
+    }
+
     var dropHeadline: String { s(en: "Drop PDFs and documents here", de: "PDFs und Dokumente hierher ziehen") }
 
-    var dropSubline: String { s(en: "Or click to choose files · pdf, txt, md, rtf, docx", de: "Oder klicken zum Auswählen · pdf, txt, md, rtf, docx") }
+    var dropSubline: String {
+        s(
+            en: "Or click to choose files/folders · pdf, txt, md, rtf, docx",
+            de: "Oder klicken zum Auswählen (Dateien/Ordner) · pdf, txt, md, rtf, docx"
+        )
+    }
 
     var namingPattern: String { s(en: "Naming pattern", de: "Namensmuster") }
 

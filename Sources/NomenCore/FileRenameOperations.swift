@@ -57,10 +57,8 @@ public enum FileRenameOperations {
 
     /// Benennt `source` kollisionsfrei um (gleicher Ordner). Unverändert, wenn der Name schon passt.
     ///
-    /// Nutzt `URLResourceValues.name` statt `moveItem`, und koordiniert nur die Quelldatei:
-    /// In der App-Sandbox reicht der Security Scope der Datei oft nicht für Schreibzugriff auf
-    /// den Elternordner (den `moveItem` und dual-coordinate aufs Ziel brauchen) — das führt zu
-    /// „Du hast nicht die Zugriffsrechte, um die Datei … zu sichern“.
+    /// Erfordert Schreibzugriff auf den Elternordner (App-Sandbox: Ordner per Open Panel /
+    /// Drag-Drop freigeben). Dann `moveItem` über NSFileCoordinator.
     public static func renameIfNeeded(
         source: URL,
         desiredName: String,
@@ -122,14 +120,10 @@ public enum FileRenameOperations {
     private static func renameInPlace(source: URL, newFileName: String) throws -> (finalURL: URL, finalName: String) {
         let name = try confinedFileName(newFileName)
         let destination = source.deletingLastPathComponent().appendingPathComponent(name, isDirectory: false)
-        // Nicht moveItem und nicht dual-coordinate(destination): beides verlangt Schreibrechte
-        // auf den Elternordner. Open Panel / Drag-Drop liefern in der Sandbox nur
-        // Security Scope auf die Datei selbst → „keine Zugriffsrechte … zu sichern“.
-        //
-        // setResourceValues(name:) benennt die bereits freigegebene Datei in-place um.
-        // Nur Quell-URL koordinieren; danach didMoveTo, damit der Sandbox-Zugriff am neuen Namen bleibt.
-        // willMoveTo weglassen: ohne Related-Item-Document-Types fordert das eine Parent-/Related-
-        // Extension an und löst denselben Permission-Fehler aus.
+        // POSIX-Rename braucht Schreibrecht auf den Elternordner. In der Sandbox liefert
+        // Open/Drop von Einzeldateien nur Datei-Scope — deshalb muss die UI vorher
+        // Ordnerzugriff per NSOpenPanel holen (`FolderAccessGrant` + `SecurityScopedURLKeeper`).
+        // Mit Ordner-Scope ist `moveItem` der zuverlässige Weg.
         var coordinationError: NSError?
         var renameError: Error?
         var resultURL: URL?
@@ -138,16 +132,14 @@ public enum FileRenameOperations {
         coordinator.coordinate(
             writingItemAt: source,
             options: .forMoving,
+            writingItemAt: destination,
+            options: [],
             error: &coordinationError
-        ) { coordinatedSource in
+        ) { coordinatedSource, coordinatedDestination in
             do {
-                var working = coordinatedSource
-                var values = URLResourceValues()
-                values.name = name
-                try working.setResourceValues(values)
-                // URL.path bleibt oft unverändert — physischer Name steht auf destination.
-                coordinator.item(at: coordinatedSource, didMoveTo: destination)
-                resultURL = destination
+                try FileManager.default.moveItem(at: coordinatedSource, to: coordinatedDestination)
+                coordinator.item(at: coordinatedSource, didMoveTo: coordinatedDestination)
+                resultURL = coordinatedDestination
             } catch {
                 renameError = error
             }

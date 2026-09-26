@@ -206,10 +206,11 @@ struct MainView: View {
     private func presentOpenPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
         panel.prompt = t.openPanelPrompt
-        panel.allowedContentTypes = SupportedDocumentFormat.openPanelContentTypes
+        // Ordner + unterstützte Dateitypen (sonst filtert UTType-Liste Ordner weg).
+        panel.allowedContentTypes = SupportedDocumentFormat.openPanelContentTypes + [.folder]
 
         panel.begin { response in
             guard response == .OK else { return }

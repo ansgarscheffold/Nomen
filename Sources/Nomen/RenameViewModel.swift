@@ -98,7 +98,20 @@ final class RenameViewModel: ObservableObject {
     func addFiles(urls: [URL]) {
         guard !isRenaming else { return }
         errorMessage = nil
-        let filtered = urls.filter { SupportedDocumentFormat.isSupported(url: $0) }
+
+        var expanded: [URL] = []
+        expanded.reserveCapacity(urls.count)
+        for url in urls {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                scopedAccess.retainDirectory(url)
+                expanded.append(contentsOf: SecurityScopedURLKeeper.supportedFiles(inDirectory: url))
+            } else if SupportedDocumentFormat.isSupported(url: url) {
+                expanded.append(url)
+            }
+        }
+
+        let filtered = expanded
         guard !filtered.isEmpty else {
             errorMessage = t.noSupportedFiles
             return
@@ -239,6 +252,22 @@ final class RenameViewModel: ObservableObject {
 
     private func runRenameSession(indices: [Int], renamedEntireList: Bool) async {
         defer { renameTask = nil }
+
+        let fileURLs = indices.compactMap { idx -> URL? in
+            guard rows.indices.contains(idx) else { return nil }
+            return rows[idx].sourceURL
+        }
+        let accessOK = await FolderAccessGrant.ensureAccess(
+            toParentDirectoriesOf: fileURLs,
+            keeper: scopedAccess,
+            title: t.folderAccessTitle,
+            messageForFolder: { t.folderAccessMessage(folderName: $0) },
+            prompt: t.folderAccessPrompt
+        )
+        guard accessOK else {
+            errorMessage = t.folderAccessDenied
+            return
+        }
 
         let outcome = await DocumentRenameSession.run(
             rows: rows,
