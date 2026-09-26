@@ -295,6 +295,16 @@ enum NomenCoreChecks {
             check("uniquify free name") { free == "b.pdf" }
             check("uniquify collision") { collision == "Neu (2).pdf" }
             check("uniquify same as source") { same == "old.pdf" }
+
+            let renamedSource = dir.appendingPathComponent("rename-me.pdf")
+            try Data([0x25, 0x50, 0x44, 0x46]).write(to: renamedSource)
+            let (finalURL, finalName) = try FileRenameOperations.renameIfNeeded(
+                source: renamedSource,
+                desiredName: "2025 03 Archiv.pdf"
+            )
+            check("rename in place name") { finalName == "2025 03 Archiv.pdf" }
+            check("rename in place exists") { FileManager.default.fileExists(atPath: finalURL.path) }
+            check("rename in place old gone") { !FileManager.default.fileExists(atPath: renamedSource.path) }
         } catch {
             failed += 1
             print("FAIL uniquify setup \(error)")

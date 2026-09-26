@@ -291,12 +291,15 @@ final class RenameViewModel: ObservableObject {
     /// Führt die Umbenennung für eine Zeile aus. Rückgabe **true**, wenn kein Fehler aufgetreten ist.
     private func applyRename(at index: Int, updated: inout [RenamePreviewRow]) -> Bool {
         let source = updated[index].sourceURL
+        let granted = source.startAccessingSecurityScopedResource()
         do {
-            let (finalURL, targetName) = try SecurityScopedResource.accessing(source) {
-                try FileRenameOperations.renameIfNeeded(
-                    source: source,
-                    desiredName: updated[index].proposedName
-                )
+            let (finalURL, targetName) = try FileRenameOperations.renameIfNeeded(
+                source: source,
+                desiredName: updated[index].proposedName
+            )
+            // Nach didMoveTo liegt der Sandbox-Zugriff auf der neuen URL.
+            if granted {
+                finalURL.stopAccessingSecurityScopedResource()
             }
             if finalURL.path != source.path {
                 updated[index].sourceURL = finalURL
@@ -309,6 +312,9 @@ final class RenameViewModel: ObservableObject {
             updated[index].statusMessage = t.renamed
             return true
         } catch {
+            if granted {
+                source.stopAccessingSecurityScopedResource()
+            }
             updated[index].statusMessage = t.renameError(error.localizedDescription)
             return false
         }

@@ -29,7 +29,7 @@ public enum FileRenameOperations {
         } catch {
             return FilenameSanitizer.archiveFallbackLiteral
         }
-        if target.path == source.path {
+        if sameFile(source, target) {
             return safeName
         }
         if !fileManager.fileExists(atPath: target.path) {
@@ -55,7 +55,11 @@ public enum FileRenameOperations {
         return safeName
     }
 
-    /// Verschiebt `source` auf einen kollisionsfreien Namen. Unverändert, wenn Quelle und Ziel identisch sind.
+    /// Benennt `source` kollisionsfrei um (gleicher Ordner). Unverändert, wenn der Name schon passt.
+    ///
+    /// Nutzt `URLResourceValues.name` statt `moveItem`: In der App-Sandbox reicht der
+    /// Security Scope der Datei oft nicht für Schreibzugriff auf den Elternordner, den
+    /// `moveItem` braucht — das führt zu „Datei konnte nicht bewegt werden“.
     public static func renameIfNeeded(
         source: URL,
         desiredName: String,
@@ -68,12 +72,12 @@ public enum FileRenameOperations {
             ignoreIfSameAs: source,
             fileManager: fileManager
         )
-        var finalURL = try confinedDestination(directory: directory, fileName: unique)
-        if finalURL.path == source.path {
-            return (finalURL, unique)
+        if source.lastPathComponent == unique {
+            return (source, unique)
         }
+
         do {
-            try fileManager.moveItem(at: source, to: finalURL)
+            return try renameInPlace(source: source, newFileName: unique)
         } catch {
             unique = uniquifyFilename(
                 desiredName: desiredName,
@@ -81,12 +85,11 @@ public enum FileRenameOperations {
                 ignoreIfSameAs: source,
                 fileManager: fileManager
             )
-            finalURL = try confinedDestination(directory: directory, fileName: unique)
-            if finalURL.path != source.path {
-                try fileManager.moveItem(at: source, to: finalURL)
+            if source.lastPathComponent == unique {
+                return (source, unique)
             }
+            return try renameInPlace(source: source, newFileName: unique)
         }
-        return (finalURL, unique)
     }
 
     public static func confinedFileName(_ desiredName: String) throws -> String {
@@ -108,6 +111,56 @@ public enum FileRenameOperations {
             throw FileRenameError.destinationEscapesDirectory
         }
         return dest
+    }
+
+    /// Gleicher Eintrag trotz unterschiedlicher URL-Normalisierung (`standardizedFileURL` o.ä.).
+    private static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL.path == b.standardizedFileURL.path
+    }
+
+    private static func renameInPlace(source: URL, newFileName: String) throws -> (finalURL: URL, finalName: String) {
+        let name = try confinedFileName(newFileName)
+        let destination = source.deletingLastPathComponent().appendingPathComponent(name, isDirectory: false)
+        // Nicht moveItem: das verlangt Schreibrechte auf den Elternordner. In der Sandbox
+        // hat die App typischerweise nur Security Scope auf die Datei selbst.
+        // setResourceValues(name:) benennt in-place um, aktualisiert die URL aber nicht —
+        // daher Ziel-URL selbst bauen. NSFileCoordinator überträgt den Sandbox-Zugriff.
+        var coordinationError: NSError?
+        var renameError: Error?
+        var resultURL: URL?
+
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.coordinate(
+            writingItemAt: source,
+            options: .forMoving,
+            writingItemAt: destination,
+            options: [],
+            error: &coordinationError
+        ) { newSource, newDestination in
+            do {
+                coordinator.item(at: newSource, willMoveTo: newDestination)
+                var working = newSource
+                var values = URLResourceValues()
+                values.name = name
+                try working.setResourceValues(values)
+                // URL.path bleibt oft unverändert — physischer Name steht auf newDestination.
+                coordinator.item(at: newSource, didMoveTo: newDestination)
+                resultURL = newDestination
+            } catch {
+                renameError = error
+            }
+        }
+
+        if let coordinationError {
+            throw coordinationError
+        }
+        if let renameError {
+            throw renameError
+        }
+        guard let resultURL else {
+            throw FileRenameError.invalidFileName
+        }
+        return (resultURL, name)
     }
 }
 
