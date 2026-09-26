@@ -17,6 +17,13 @@ enum DocumentRenameSession {
         case row(at: Int, RenamePreviewRow)
     }
 
+    private struct IOResult: Sendable {
+        var success: Bool
+        var finalURL: URL
+        var targetName: String
+        var errorDescription: String?
+    }
+
     static func interRenameDelay(total: Int) -> Duration? {
         switch total {
         case 1...6: return .milliseconds(50)
@@ -59,16 +66,26 @@ enum DocumentRenameSession {
             }
             guard updated.indices.contains(idx) else { continue }
 
-            if applyRename(
-                at: idx,
-                updated: &updated,
-                lastInputURLs: &urls,
-                renamedStatus: renamedStatus,
-                renameErrorMessage: renameErrorMessage
-            ) {
+            let source = updated[idx].sourceURL
+            let desiredName = updated[idx].proposedName
+            let io = await Task.detached(priority: .userInitiated) {
+                renameOnBackground(source: source, desiredName: desiredName)
+            }.value
+
+            if io.success {
                 successCount += 1
+                if io.finalURL.path != source.path {
+                    updated[idx].sourceURL = io.finalURL
+                    if let j = urls.firstIndex(where: { $0.path == source.path }) {
+                        urls[j] = io.finalURL
+                    }
+                }
+                updated[idx].proposedName = io.targetName
+                updated[idx].originalName = io.targetName
+                updated[idx].statusMessage = renamedStatus
             } else {
                 failureCount += 1
+                updated[idx].statusMessage = renameErrorMessage(io.errorDescription ?? "")
             }
             emit(.row(at: idx, updated[idx]))
             emit(.feedback(.working(done: step + 1, total: total)))
@@ -114,39 +131,32 @@ enum DocumentRenameSession {
         return Outcome(rows: updated, lastInputURLs: urls, shouldClearList: false)
     }
 
-    private static func applyRename(
-        at index: Int,
-        updated: inout [RenamePreviewRow],
-        lastInputURLs: inout [URL],
-        renamedStatus: String,
-        renameErrorMessage: (String) -> String
-    ) -> Bool {
-        let source = updated[index].sourceURL
+    nonisolated private static func renameOnBackground(source: URL, desiredName: String) -> IOResult {
         let granted = source.startAccessingSecurityScopedResource()
         do {
             let (finalURL, targetName) = try FileRenameOperations.renameIfNeeded(
                 source: source,
-                desiredName: updated[index].proposedName
+                desiredName: desiredName
             )
             if granted {
                 finalURL.stopAccessingSecurityScopedResource()
             }
-            if finalURL.path != source.path {
-                updated[index].sourceURL = finalURL
-                if let j = lastInputURLs.firstIndex(where: { $0.path == source.path }) {
-                    lastInputURLs[j] = finalURL
-                }
-            }
-            updated[index].proposedName = targetName
-            updated[index].originalName = targetName
-            updated[index].statusMessage = renamedStatus
-            return true
+            return IOResult(
+                success: true,
+                finalURL: finalURL,
+                targetName: targetName,
+                errorDescription: nil
+            )
         } catch {
             if granted {
                 source.stopAccessingSecurityScopedResource()
             }
-            updated[index].statusMessage = renameErrorMessage(error.localizedDescription)
-            return false
+            return IOResult(
+                success: false,
+                finalURL: source,
+                targetName: desiredName,
+                errorDescription: error.localizedDescription
+            )
         }
     }
 }

@@ -156,28 +156,23 @@ actor LlamaCppRunner {
         llama_memory_clear(llama_get_memory(ctx), true)
 
         let vocab = llama_model_get_vocab(model)
+        let nCtx = Int(llama_n_ctx(ctx))
+        let nBatch = Int(llama_n_batch(ctx))
 
+        var promptTokens = [llama_token](repeating: 0, count: nCtx)
         let nPrompt: Int = fullPrompt.withCString { cPtr in
-            let len = Int32(strlen(cPtr))
-            let neg = llama_tokenize(vocab, cPtr, len, nil, 0, true, true)
-            guard neg < 0 else { return 0 }
-            return Int(-neg)
-        }
-        guard nPrompt > 0 else { throw LlamaCppError.tokenizeFailed }
-
-        var promptTokens = [llama_token](repeating: 0, count: nPrompt)
-        let tokOK: Bool = fullPrompt.withCString { cPtr in
             let len = Int32(strlen(cPtr))
             let r = promptTokens.withUnsafeMutableBufferPointer { buf -> Int32 in
                 guard let b = buf.baseAddress else { return -1 }
                 return llama_tokenize(vocab, cPtr, len, b, Int32(buf.count), true, true)
             }
-            return r >= 0
+            return Int(r)
         }
-        guard tokOK else { throw LlamaCppError.tokenizeFailed }
+        guard nPrompt > 0 else { throw LlamaCppError.tokenizeFailed }
+        if nPrompt < promptTokens.count {
+            promptTokens.removeSubrange(nPrompt...)
+        }
 
-        let nCtx = Int(llama_n_ctx(ctx))
-        let nBatch = Int(llama_n_batch(ctx))
         guard nPrompt <= nBatch else {
             throw LlamaCppError.promptExceedsContext(promptTokens: nPrompt, maxBatch: nBatch, nCtx: nCtx)
         }
@@ -211,6 +206,8 @@ actor LlamaCppRunner {
         var output = ""
         var nPos = 0
         let limit = nPrompt + Int(maxNewTokens)
+        var jsonTracker = DocumentNamingReplyParser.BalancedJSONObjectTracker()
+        _ = jsonTracker.consume(jsonLeadIn)
 
         while nPos + Int(batch.n_tokens) < limit {
             let dec = llama_decode(ctx, batch)
@@ -224,13 +221,14 @@ actor LlamaCppRunner {
                 break
             }
 
-            output.append(utf8Piece(for: newTokenId, vocab: vocab))
+            let piece = utf8Piece(for: newTokenId, vocab: vocab)
+            output.append(piece)
 
             var single = newTokenId
             batch = llama_batch_get_one(&single, 1)
 
             if output.count > 8192 { break }
-            if output.last == "}", DocumentNamingPipeline.ggufShouldStopGeneration(leadIn: jsonLeadIn, generatedSuffix: output) {
+            if jsonTracker.consume(piece) {
                 break
             }
         }

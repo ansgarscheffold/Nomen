@@ -29,8 +29,59 @@ public enum DocumentNamingReplyParser {
     /// Sobald das erste vollständige `{…}` geschlossen ist, abbrechen (spart Tokens, verhindert Nachplappern).
     public static func ggufShouldStopGeneration(leadIn: String, generatedSuffix: String) -> Bool {
         guard generatedSuffix.contains("}") else { return false }
-        let full = leadIn + generatedSuffix
-        return extractFirstBalancedJSONObject(from: full) != nil
+        var tracker = BalancedJSONObjectTracker()
+        return tracker.consume(leadIn) || tracker.consume(generatedSuffix)
+    }
+
+    /// Inkrementeller Brace-/String-Scanner für den GGUF-Decode-Hot-Path (O(Δ) statt Full-Rescan).
+    public struct BalancedJSONObjectTracker: Sendable {
+        private var depth = 0
+        private var inString = false
+        private var escape = false
+        private var started = false
+        private var complete = false
+
+        public init() {}
+
+        /// Füttert neue Zeichen; `true`, sobald das erste balancierte `{…}` geschlossen ist.
+        public mutating func consume(_ s: String) -> Bool {
+            guard !complete else { return true }
+            for c in s {
+                if feed(c) {
+                    complete = true
+                    return true
+                }
+            }
+            return false
+        }
+
+        private mutating func feed(_ c: Character) -> Bool {
+            if escape {
+                escape = false
+                return false
+            }
+            if inString {
+                if c == "\\" { escape = true }
+                else if c == "\"" { inString = false }
+                return false
+            }
+            switch c {
+            case "\"":
+                inString = true
+            case "{":
+                depth += 1
+                started = true
+            case "}":
+                guard started else { return false }
+                depth -= 1
+                if depth == 0 {
+                    return true
+                }
+            default:
+                break
+            }
+            return false
+        }
     }
 
     /// Rohtext des Modells → gleiche Auswertung wie bei Foundation Models.

@@ -133,7 +133,7 @@ public struct RenamePreviewRow: Identifiable, Hashable, Sendable {
     }
 }
 
-public enum RenameAnalysisPhase: String {
+public enum RenameAnalysisPhase: String, Sendable {
     case idle
     case extracting
     case ocr
@@ -142,13 +142,13 @@ public enum RenameAnalysisPhase: String {
 }
 
 /// Kurzes UI-Feedback beim Umbenennen (Toolbar, Tabelle bleibt sichtbar).
-public enum RenameFeedbackPhase: Equatable {
+public enum RenameFeedbackPhase: Equatable, Sendable {
     case idle
     case working(done: Int, total: Int)
     case outcome(kind: RenameOutcomeKind, renamedCount: Int, renamedEntireList: Bool)
 }
 
-public enum RenameOutcomeKind: Equatable {
+public enum RenameOutcomeKind: Equatable, Sendable {
     /// Alle geplanten Umbenennungen ohne Fehler durchgelaufen.
     case success
     case partialFailure

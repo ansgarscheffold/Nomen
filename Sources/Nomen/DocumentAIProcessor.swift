@@ -33,6 +33,7 @@ enum DocumentAIProcessor {
     }
 
     static func extractForRenaming(url: URL, extLowercased: String) async throws -> ExtractionSnapshot {
+        let limit = DocumentNamingPromptBuilder.excerptCharacterLimit
         if extLowercased == SupportedDocumentFormat.pdf.rawValue {
             guard let pdf = PDFDocument(url: url) else {
                 throw DocumentAIProcessorError.ocrFailed
@@ -42,7 +43,7 @@ enum DocumentAIProcessor {
 
             if embeddedCount > embeddedTextEnough {
                 return ExtractionSnapshot(
-                    combinedText: embedded,
+                    combinedText: String(embedded.prefix(limit)),
                     embeddedCharacterCount: embeddedCount,
                     ocrCharacterCount: 0,
                     ocrPageCount: 0,
@@ -53,8 +54,9 @@ enum DocumentAIProcessor {
             // Scanned/image PDF — OCR der ersten Seiten (nicht nur S. 1: Infos sitzen oft weiter hinten).
             let (ocrRaw, pagesRead) = try await recognizeTextOnPDFPages(pdf, maxPages: maxNamingPages)
             let ocrCount = ocrRaw.trimmingCharacters(in: .whitespacesAndNewlines).count
+            let combined = ocrRaw.isEmpty ? embedded : ocrRaw
             return ExtractionSnapshot(
-                combinedText: ocrRaw.isEmpty ? embedded : ocrRaw,
+                combinedText: String(combined.prefix(limit)),
                 embeddedCharacterCount: embeddedCount,
                 ocrCharacterCount: ocrCount,
                 ocrPageCount: pagesRead,
@@ -64,7 +66,7 @@ enum DocumentAIProcessor {
         let raw = try DocumentTextExtractor.extractText(from: url)
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return ExtractionSnapshot(
-            combinedText: raw,
+            combinedText: String(raw.prefix(limit)),
             embeddedCharacterCount: t.count,
             ocrCharacterCount: 0,
             ocrPageCount: 0,

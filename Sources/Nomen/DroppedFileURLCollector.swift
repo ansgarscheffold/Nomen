@@ -3,14 +3,32 @@ import UniformTypeIdentifiers
 import NomenCore
 
 enum DroppedFileURLCollector {
+    private static let parallelCap = 8
+
     @MainActor
     static func collect(from providers: [NSItemProvider]) async -> [URL] {
         var urls: [URL] = []
-        for provider in providers {
-            if let url = await loadFileURL(from: provider) {
-                urls.append(url)
+        urls.reserveCapacity(providers.count)
+
+        var index = 0
+        while index < providers.count {
+            let end = min(index + parallelCap, providers.count)
+            var tasks: [Task<URL?, Never>] = []
+            tasks.reserveCapacity(end - index)
+            for i in index..<end {
+                let provider = providers[i]
+                tasks.append(Task { @MainActor in
+                    await loadFileURL(from: provider)
+                })
             }
+            for task in tasks {
+                if let url = await task.value {
+                    urls.append(url)
+                }
+            }
+            index = end
         }
+
         return urls
     }
 

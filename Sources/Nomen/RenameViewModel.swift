@@ -3,6 +3,7 @@ import Foundation
 import NomenCore
 
 private let liveProgressInterval: Duration = .milliseconds(90)
+private let schemaRefreshDebounce: Duration = .milliseconds(120)
 
 @MainActor
 final class RenameProgressState: ObservableObject {
@@ -13,9 +14,7 @@ final class RenameProgressState: ObservableObject {
 @MainActor
 final class RenameViewModel: ObservableObject {
     @Published var schema: DateNameSchema = .yearMonthTitle
-    @Published private(set) var rows: [RenamePreviewRow] = [] {
-        didSet { reindexRows() }
-    }
+    @Published private(set) var rows: [RenamePreviewRow] = []
     @Published private(set) var phase: RenameAnalysisPhase = .idle
     @Published var errorMessage: String?
     @Published private(set) var renameFeedbackPhase: RenameFeedbackPhase = .idle
@@ -36,6 +35,7 @@ final class RenameViewModel: ObservableObject {
     private var analysisRun: Int = 0
     private var analysisTask: Task<Void, Never>?
     private var renameTask: Task<Void, Never>?
+    private var schemaRefreshTask: Task<Void, Never>?
     private var rowByID: [UUID: RenamePreviewRow] = [:]
     private var lastProgressPublish: ContinuousClock.Instant?
 
@@ -66,16 +66,16 @@ final class RenameViewModel: ObservableObject {
         rowByID = map
     }
 
-    /// Inkrementelles Update ohne volle Array-Zuweisung an SwiftUI (objectWillChange manuell).
+    /// Einzelzeilen-Update: ein `@Published`-Tick, O(1) Index-Pflege (kein volles Reindex).
     private func updateRow(at index: Int, _ row: RenamePreviewRow) {
         guard rows.indices.contains(index) else { return }
-        objectWillChange.send()
         rows[index] = row
         rowByID[row.id] = row
     }
 
     private func replaceRows(_ newRows: [RenamePreviewRow]) {
         rows = newRows
+        reindexRows()
     }
 
     private func setProgress(value: Double, label: String, force: Bool = false) {
@@ -108,6 +108,8 @@ final class RenameViewModel: ObservableObject {
             merged.append(u)
         }
         lastInputURLs = merged
+        schemaRefreshTask?.cancel()
+        schemaRefreshTask = nil
         analysisRun += 1
         let run = analysisRun
         analysisTask?.cancel()
@@ -124,10 +126,13 @@ final class RenameViewModel: ObservableObject {
         renameTask?.cancel()
         renameTask = nil
         renameFeedbackPhase = .idle
+        schemaRefreshTask?.cancel()
+        schemaRefreshTask = nil
         analysisTask?.cancel()
         analysisTask = nil
         analysisRun += 1
         rows = []
+        reindexRows()
         lastInputURLs = []
         phase = .idle
         lastProgressPublish = nil
@@ -138,35 +143,49 @@ final class RenameViewModel: ObservableObject {
 
     func refreshAfterSchemaChange() {
         guard !isBusy, phase == .ready, !rows.isEmpty else { return }
-        reapplySchemaOnly()
+        schemaRefreshTask?.cancel()
+        schemaRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: schemaRefreshDebounce)
+            guard !Task.isCancelled else { return }
+            await self?.reapplySchemaOnly()
+        }
     }
 
     /// Recomputes preview filenames from cached `namingBasis` (no PDF/OCR re-run).
-    private func reapplySchemaOnly() {
+    private func reapplySchemaOnly() async {
+        guard !isBusy, phase == .ready, !rows.isEmpty else { return }
         let schemaSnapshot = schema
-        var updated = rows
-        for i in updated.indices {
-            guard let basis = updated[i].namingBasis,
-                  let date = basis.documentDate else { continue }
+        let dateFromContent = t.dateFromContent
+        let dateFromFile = t.dateFromFile
+        let snapshot = rows
+        let updated = await Task.detached(priority: .userInitiated) {
+            var next = snapshot
+            for i in next.indices {
+                guard let basis = next[i].namingBasis,
+                      let date = basis.documentDate else { continue }
 
-            let ext = updated[i].sourceURL.pathExtension
-            let proposedBase = FilenameFormatting.formatFilename(
-                schema: schemaSnapshot,
-                title: basis.title,
-                date: date,
-                originalExtension: ext
-            )
-            let directory = updated[i].sourceURL.deletingLastPathComponent()
-            let unique = FileRenameOperations.uniquifyFilename(
-                desiredName: proposedBase,
-                directory: directory,
-                ignoreIfSameAs: updated[i].sourceURL
-            )
-            updated[i].proposedName = unique
-            updated[i].statusMessage = basis.usedContentDate ? t.dateFromContent : t.dateFromFile
-            updated[i].usedFallbackDate = !basis.usedContentDate
-        }
-        rows = updated
+                let ext = next[i].sourceURL.pathExtension
+                let proposedBase = FilenameFormatting.formatFilename(
+                    schema: schemaSnapshot,
+                    title: basis.title,
+                    date: date,
+                    originalExtension: ext
+                )
+                let directory = next[i].sourceURL.deletingLastPathComponent()
+                let unique = FileRenameOperations.uniquifyFilename(
+                    desiredName: proposedBase,
+                    directory: directory,
+                    ignoreIfSameAs: next[i].sourceURL
+                )
+                next[i].proposedName = unique
+                next[i].statusMessage = basis.usedContentDate ? dateFromContent : dateFromFile
+                next[i].usedFallbackDate = !basis.usedContentDate
+            }
+            return next
+        }.value
+        guard !Task.isCancelled, schema == schemaSnapshot, phase == .ready else { return }
+        replaceRows(updated)
+        schemaRefreshTask = nil
     }
 
     func syncFooterAfterLanguageChange() {
@@ -181,6 +200,7 @@ final class RenameViewModel: ObservableObject {
     func removeRows(ids: Set<UUID>) {
         guard !isRenaming else { return }
         rows.removeAll { ids.contains($0.id) }
+        reindexRows()
         lastInputURLs = rows.map(\.sourceURL)
         if rows.isEmpty {
             phase = .idle

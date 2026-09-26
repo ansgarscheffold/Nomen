@@ -26,11 +26,46 @@ struct MainView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                namingBar
+                NamingBarPane(
+                    lang: lang,
+                    schemaValue: model.schema,
+                    schema: $model.schema,
+                    isInteractionLocked: model.isBusy || model.isRenaming
+                )
+                .equatable()
                 Divider()
-                toolbarRow
+                ToolbarRowPane(
+                    lang: lang,
+                    progress: model.progress,
+                    phase: model.phase,
+                    isBusy: model.isBusy,
+                    isRenaming: model.isRenaming,
+                    canRename: model.canRename,
+                    rowsEmpty: model.rows.isEmpty,
+                    renameFeedbackPhase: model.renameFeedbackPhase,
+                    onClear: { model.clear() },
+                    onStop: { model.stopAnalysis() },
+                    onRenameAll: {
+                        requestRename(ids: Set(model.rows.filter { !$0.isAnalysisPlaceholder }.map(\.id)))
+                    }
+                )
+                .equatable()
                 Divider()
-                dropZone
+                DropZonePane(
+                    lang: lang,
+                    isDragTargetedValue: isDragTargeted,
+                    isDragTargeted: $isDragTargeted,
+                    isRenaming: model.isRenaming,
+                    onOpen: { presentOpenPanel() },
+                    onDropURLs: { urls in
+                        if urls.isEmpty {
+                            model.errorMessage = t.dropCouldNotReadURLs
+                            return
+                        }
+                        model.addFiles(urls: urls)
+                    }
+                )
+                .equatable()
                 Divider()
                 previewTable
                 if showPipelineDebug {
@@ -123,131 +158,6 @@ struct MainView: View {
         }
     }
 
-    private var namingBar: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
-            Text(t.namingPattern)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .fixedSize()
-
-            Picker("", selection: $model.schema) {
-                ForEach(DateNameSchema.allCases) { s in
-                    Text(t.schemaMenuLabel(s)).tag(s)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(minWidth: 220, alignment: .leading)
-            .disabled(model.isBusy || model.isRenaming)
-
-            Text(t.schemaDetailHint(model.schema))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
-    }
-
-    private var toolbarRow: some View {
-        HStack(spacing: 12) {
-            Label(t.localOnlyBadge, systemImage: "lock.fill")
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.green.opacity(0.15), in: Capsule())
-                .foregroundStyle(.green)
-
-            Spacer(minLength: 8)
-
-            if model.isRenaming {
-                renameToolbarFeedback
-                    .frame(minWidth: 100, maxWidth: 440, alignment: .leading)
-            } else if model.isBusy {
-                AnalysisBusyProgress(progress: model.progress, t: t, onStop: { model.stopAnalysis() })
-            } else if model.phase == .ready, !model.rows.isEmpty {
-                AnalysisDoneLabel(progress: model.progress)
-            }
-
-            Spacer(minLength: 8)
-
-            Button(role: .destructive, action: { model.clear() }) {
-                Label(t.clear, systemImage: "trash")
-            }
-            .disabled(model.rows.isEmpty || model.isBusy)
-
-            Button(action: {
-                requestRename(ids: Set(model.rows.filter { !$0.isAnalysisPlaceholder }.map(\.id)))
-            }) {
-                Label(t.renameAll, systemImage: "textformat")
-            }
-            .buttonStyle(GentleProminentButtonStyle())
-            .disabled(!model.canRename)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
-    }
-
-    private var dropZone: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(isDragTargeted
-                      ? Color.accentColor.opacity(0.08)
-                      : Color.primary.opacity(0.03))
-                .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
-
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(
-                    isDragTargeted ? Color.accentColor : Color.secondary.opacity(0.30),
-                    style: StrokeStyle(lineWidth: isDragTargeted ? 2.5 : 1.5, dash: [9, 6])
-                )
-                .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
-
-            HStack(spacing: 14) {
-                Image(systemName: isDragTargeted ? "arrow.down.doc.fill" : "arrow.down.doc")
-                    .font(.system(size: 26, weight: .regular))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(isDragTargeted ? Color.accentColor : .secondary)
-                    .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.dropHeadline)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(isDragTargeted ? Color.accentColor : .primary)
-                    Text(t.dropSubline)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 24)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minHeight: 76)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !model.isRenaming else { return }
-            presentOpenPanel()
-        }
-        .onDrop(of: [.fileURL, .url], isTargeted: $isDragTargeted) { providers in
-            guard !model.isRenaming else { return false }
-            Task { @MainActor in
-                let urls = await DroppedFileURLCollector.collect(from: providers)
-                if urls.isEmpty {
-                    model.errorMessage = t.dropCouldNotReadURLs
-                    return
-                }
-                model.addFiles(urls: urls)
-            }
-            return true
-        }
-    }
-
     private var previewTable: some View {
         PreviewTablePane(
             rows: model.rows,
@@ -263,64 +173,6 @@ struct MainView: View {
             onClear: { model.clear() },
             onQuickLook: { quickLook.show(urls: $0) }
         )
-    }
-
-    @ViewBuilder
-    private var renameToolbarFeedback: some View {
-        switch model.renameFeedbackPhase {
-        case .idle:
-            EmptyView()
-        case .working(let done, let total):
-            HStack(alignment: .center, spacing: 10) {
-                if done == 0 {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(t.renameWorkingPreparing)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    ProgressView(value: Double(done), total: Double(total))
-                        .progressViewStyle(.linear)
-                        .tint(Color.accentColor)
-                        .frame(minWidth: 120, idealWidth: 160, maxWidth: 220)
-                    Text(t.renameWorkingProgress(done: done, total: total))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-        case .outcome(let kind, let renamedCount, let entireList):
-            HStack(alignment: .center, spacing: 8) {
-                switch kind {
-                case .success:
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.green)
-                        .symbolEffect(.bounce, value: model.renameFeedbackPhase)
-                    Text(t.renameSuccessSummary(count: renamedCount, entireList: entireList))
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                case .partialFailure:
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.orange)
-                    Text(t.renamePartialTitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                case .allFailed:
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.red)
-                    Text(t.renameAllFailedTitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-        }
     }
 
     private var pipelineDebugPanel: some View {
@@ -362,6 +214,244 @@ struct MainView: View {
         panel.begin { response in
             guard response == .OK else { return }
             model.addFiles(urls: panel.urls)
+        }
+    }
+}
+
+/// Naming-Bar: Equatable, damit Row-Updates den Chrome nicht neu zeichnen.
+private struct NamingBarPane: View, Equatable {
+    let lang: AppLanguage
+    let schemaValue: DateNameSchema
+    @Binding var schema: DateNameSchema
+    let isInteractionLocked: Bool
+
+    nonisolated static func == (lhs: NamingBarPane, rhs: NamingBarPane) -> Bool {
+        lhs.lang == rhs.lang
+            && lhs.schemaValue == rhs.schemaValue
+            && lhs.isInteractionLocked == rhs.isInteractionLocked
+    }
+
+    private var t: L10n { L10n(lang) }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            Text(t.namingPattern)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+
+            Picker("", selection: $schema) {
+                ForEach(DateNameSchema.allCases) { s in
+                    Text(t.schemaMenuLabel(s)).tag(s)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(minWidth: 220, alignment: .leading)
+            .disabled(isInteractionLocked)
+
+            Text(t.schemaDetailHint(schema))
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+}
+
+/// Toolbar: Equatable über Chrome-State; Progress läuft weiter über `RenameProgressState`.
+private struct ToolbarRowPane: View, Equatable {
+    let lang: AppLanguage
+    @ObservedObject var progress: RenameProgressState
+    let phase: RenameAnalysisPhase
+    let isBusy: Bool
+    let isRenaming: Bool
+    let canRename: Bool
+    let rowsEmpty: Bool
+    let renameFeedbackPhase: RenameFeedbackPhase
+    let onClear: () -> Void
+    let onStop: () -> Void
+    let onRenameAll: () -> Void
+
+    nonisolated static func == (lhs: ToolbarRowPane, rhs: ToolbarRowPane) -> Bool {
+        if lhs.lang != rhs.lang { return false }
+        if lhs.phase != rhs.phase { return false }
+        if lhs.isBusy != rhs.isBusy { return false }
+        if lhs.isRenaming != rhs.isRenaming { return false }
+        if lhs.canRename != rhs.canRename { return false }
+        if lhs.rowsEmpty != rhs.rowsEmpty { return false }
+        if lhs.renameFeedbackPhase != rhs.renameFeedbackPhase { return false }
+        return true
+    }
+
+    private var t: L10n { L10n(lang) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Label(t.localOnlyBadge, systemImage: "lock.fill")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.green.opacity(0.15), in: Capsule())
+                .foregroundStyle(.green)
+
+            Spacer(minLength: 8)
+
+            if isRenaming {
+                renameToolbarFeedback
+                    .frame(minWidth: 100, maxWidth: 440, alignment: .leading)
+            } else if isBusy {
+                AnalysisBusyProgress(progress: progress, t: t, onStop: onStop)
+            } else if phase == .ready, !rowsEmpty {
+                AnalysisDoneLabel(progress: progress)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(role: .destructive, action: onClear) {
+                Label(t.clear, systemImage: "trash")
+            }
+            .disabled(rowsEmpty || isBusy)
+
+            Button(action: onRenameAll) {
+                Label(t.renameAll, systemImage: "textformat")
+            }
+            .buttonStyle(GentleProminentButtonStyle())
+            .disabled(!canRename)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var renameToolbarFeedback: some View {
+        switch renameFeedbackPhase {
+        case .idle:
+            EmptyView()
+        case .working(let done, let total):
+            HStack(alignment: .center, spacing: 10) {
+                if done == 0 {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(t.renameWorkingPreparing)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    ProgressView(value: Double(done), total: Double(total))
+                        .progressViewStyle(.linear)
+                        .tint(Color.accentColor)
+                        .frame(minWidth: 120, idealWidth: 160, maxWidth: 220)
+                    Text(t.renameWorkingProgress(done: done, total: total))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        case .outcome(let kind, let renamedCount, let entireList):
+            HStack(alignment: .center, spacing: 8) {
+                switch kind {
+                case .success:
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .symbolEffect(.bounce, value: renameFeedbackPhase)
+                    Text(t.renameSuccessSummary(count: renamedCount, entireList: entireList))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                case .partialFailure:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(t.renamePartialTitle)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                case .allFailed:
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.red)
+                    Text(t.renameAllFailedTitle)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+}
+
+private struct DropZonePane: View, Equatable {
+    let lang: AppLanguage
+    let isDragTargetedValue: Bool
+    @Binding var isDragTargeted: Bool
+    let isRenaming: Bool
+    let onOpen: () -> Void
+    let onDropURLs: ([URL]) -> Void
+
+    nonisolated static func == (lhs: DropZonePane, rhs: DropZonePane) -> Bool {
+        lhs.lang == rhs.lang
+            && lhs.isDragTargetedValue == rhs.isDragTargetedValue
+            && lhs.isRenaming == rhs.isRenaming
+    }
+
+    private var t: L10n { L10n(lang) }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isDragTargeted
+                      ? Color.accentColor.opacity(0.08)
+                      : Color.primary.opacity(0.03))
+                .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
+
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    isDragTargeted ? Color.accentColor : Color.secondary.opacity(0.30),
+                    style: StrokeStyle(lineWidth: isDragTargeted ? 2.5 : 1.5, dash: [9, 6])
+                )
+                .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
+
+            HStack(spacing: 14) {
+                Image(systemName: isDragTargeted ? "arrow.down.doc.fill" : "arrow.down.doc")
+                    .font(.system(size: 26, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(isDragTargeted ? Color.accentColor : .secondary)
+                    .animation(.easeInOut(duration: 0.18), value: isDragTargeted)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t.dropHeadline)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isDragTargeted ? Color.accentColor : .primary)
+                    Text(t.dropSubline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 24)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(minHeight: 76)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isRenaming else { return }
+            onOpen()
+        }
+        .onDrop(of: [.fileURL, .url], isTargeted: $isDragTargeted) { providers in
+            guard !isRenaming else { return false }
+            Task { @MainActor in
+                let urls = await DroppedFileURLCollector.collect(from: providers)
+                onDropURLs(urls)
+            }
+            return true
         }
     }
 }
